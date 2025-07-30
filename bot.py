@@ -6,23 +6,23 @@ import requests
 from playwright.async_api import async_playwright
 
 # Telegram Configuration - Update with your details
-TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-TELEGRAM_CHAT_ID = "YOUR_TELEGRAM_CHAT_ID"
+TELEGRAM_BOT_TOKEN = "8352946607:AAFTsY3KWCeyt4i8qhr_Z95xBZdbUW7UM0A"
+TELEGRAM_CHAT_ID = "7624517153"
 
 # Bot Configuration - Update these values
 CONFIG = {
-    "email": "your_email@example.com",
-    "password": "your_password",
+    "email": "abusinan1523@gmail.com",
+    "password": "Sinan563.",
     "products": [
         {
-            "url": "https://www.popmart.com/us/product/labubu-123",
+            "url": "https://www.popmart.com/us/products/1384/KUBO-Breathing-In-Series-Figures",
             "size": "Single box",
-            "quantity": 1
+            "quantity": 2
         },
         {
-            "url": "https://www.popmart.com/us/product/popmart-456",
+            "url": "https://www.popmart.com/us/products/578/LABUBU-Time-to-chill-Vinyl-Plush-Doll",
             "size": "Whole set",
-            "quantity": 3
+            "quantity": 1
         }
     ],
     "retry_limit": 10,
