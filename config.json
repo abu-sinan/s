@@ -1,0 +1,24 @@
+{
+    "email": "abusinan1523@gmail.com",
+    "password": "Sinan563.",
+    "headless": true,
+    "scan_interval": 300,
+    "telegram": {
+        "token": "8352946607:AAFTsY3KWCeyt4i8qhr_Z95xBZdbUW7UM0A",
+        "chat_id": "7624517153"
+    },
+    "products": [
+        {
+            "name": "THE MONSTERS - BEST OF LUCK Vinyl Plush Doll",
+            "url": "https://www.popmart.com/us/products/890/THE-MONSTERS---BEST-OF-LUCK-Vinyl-Plush-Doll",
+            "size": "Single box",
+            "quantity": 1
+        },
+        {
+            "name": "HACIPUPU Snuggle With You Series-Plush Bag Blind Box",
+            "url": "https://www.popmart.com/us/products/1921/HACIPUPU-Snuggle-With-You-Series-Plush-Bag-Blind-Box",
+            "size": "Whole set",
+            "quantity": 3
+        }
+    ]
+}
