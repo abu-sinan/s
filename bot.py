@@ -85,10 +85,10 @@ class PopMartBot:
                         url,
                         files={'photo': photo},
                         data={"chat_id": self.config['telegram']['chat_id'], "caption": message},
-                        timeout=10
+                        timeout=30  # Increased timeout
                     )
             else:
-                requests.post(url, json=payload, timeout=10)
+                requests.post(url, json=payload, timeout=30)  # Increased timeout
         except Exception as e:
             print(f"⚠️ Telegram notification failed: {str(e)}")
 
@@ -114,11 +114,11 @@ class PopMartBot:
             raise
 
     def handle_cloudflare(self):
-        """Wait for Cloudflare challenge"""
+        """Wait for Cloudflare challenge with 30s timeout"""
         if self.page.locator("div#challenge-stage").count() > 0:
             logging.info("⏳ Cloudflare verification detected")
             try:
-                self.page.wait_for_selector("div#challenge-stage", state="hidden", timeout=120000)
+                self.page.wait_for_selector("div#challenge-stage", state="hidden", timeout=30000)  # 30s timeout
                 logging.info("✅ Cloudflare verification passed")
             except Exception as e:
                 self.page.screenshot(path="cloudflare_failure.png")
@@ -133,68 +133,71 @@ class PopMartBot:
         return path
 
     def login(self):
-        """Enhanced login with retries and debugging"""
+        """Enhanced login with 30s timeouts"""
         max_retries = self.config.get('login', {}).get('max_retries', 3)
-        retry_delay = self.config.get('login', {}).get('retry_delay', 5)
+        login_url = "https://www.popmart.com/us/user/login?redirect=%2Faccount"
         
         for attempt in range(1, max_retries + 1):
             try:
                 logging.info(f"🔐 Login attempt {attempt}/{max_retries}")
                 
-                # Navigate to login page
-                login_btn = self.page.locator('a[href*="/user/login"]').first
-                login_btn.click(timeout=15000)
+                # Navigate directly to login page with 30s timeout
+                self.page.goto(login_url, timeout=30000)
                 self.page.wait_for_load_state("networkidle", timeout=30000)
                 
-                # Fill email
-                email_field = self.page.locator('input#email')
-                email_field.wait_for(timeout=10000)
+                # Fill email with 30s timeout
+                email_field = self.page.locator('input[placeholder="Enter your e-mail address"]')
+                email_field.wait_for(timeout=30000)
                 email_field.fill(self.config["email"])
+                self.random_delay(0.5, 1.5)
                 
-                # Accept terms if needed
-                terms_checkbox = self.page.locator('input.ant-checkbox-input')
+                # Check terms box if exists
+                terms_checkbox = self.page.locator('input[type="checkbox"]').first
                 if terms_checkbox.count() > 0:
                     terms_checkbox.check()
+                    self.random_delay(0.5, 1.5)
                 
-                # Click continue
+                # Click continue with 30s timeout
                 continue_btn = self.page.locator('button:has-text("CONTINUE")')
-                continue_btn.click(timeout=15000)
+                continue_btn.click(timeout=30000)
                 self.page.wait_for_load_state("networkidle", timeout=30000)
                 
-                # Fill password
-                password_field = self.page.locator('input#password')
-                password_field.wait_for(timeout=10000)
+                # Fill password with 30s timeout
+                password_field = self.page.locator('input[placeholder="Enter your password"]')
+                password_field.wait_for(timeout=30000)
                 password_field.fill(self.config["password"])
+                self.random_delay(0.5, 1.5)
                 
-                # Submit login
+                # Click sign in with 30s timeout
                 signin_btn = self.page.locator('button:has-text("SIGN IN")')
-                signin_btn.click(timeout=15000)
+                signin_btn.click(timeout=30000)
                 
-                # Verify success
+                # Wait for success with 30s timeout
                 try:
-                    self.page.locator('img[alt*="Profile"]').wait_for(timeout=20000)
+                    self.page.wait_for_selector('img[alt*="Profile"], div.account-page', timeout=30000)
                     logging.info("🔑 Login successful")
                     return True
-                except:
-                    error_msg = self.page.locator('div.ant-message-error')
+                except Exception as e:
+                    error_msg = self.page.locator('div.ant-message-error, div.error-message')
                     if error_msg.count() > 0:
-                        raise Exception(f"Login error: {error_msg.inner_text()}")
-                    raise Exception("Login timeout")
+                        error_text = error_msg.inner_text(timeout=30000)
+                        raise Exception(f"Login error: {error_text}")
+                    raise Exception("Login timeout - unknown error")
                     
             except Exception as e:
                 debug_img = self.debug_screenshot(f"login_fail_attempt_{attempt}")
                 self.send_telegram(f"⚠️ Login attempt {attempt} failed: {str(e)}", debug_img)
                 
                 if attempt < max_retries:
+                    retry_delay = self.config.get('login', {}).get('retry_delay', 10)
                     logging.info(f"Retrying in {retry_delay}s...")
                     time.sleep(retry_delay)
-                    self.page.reload()
                     continue
                 
                 raise Exception(f"Login failed after {max_retries} attempts")
 
     def launch_browser(self):
-        """Configure browser instance"""
+        """Configure browser instance with 30s timeout"""
         return self.playwright.chromium.launch(
             headless=self.config.get("headless", True),
             args=[
@@ -202,11 +205,11 @@ class PopMartBot:
                 "--no-sandbox",
                 "--disable-dev-shm-usage"
             ],
-            timeout=60000
+            timeout=30000  # 30s timeout
         )
 
     def create_context(self):
-        """Create browser context with stealth settings"""
+        """Create browser context with 30s timeout settings"""
         return self.browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
             viewport={"width": 1366, "height": 768},
@@ -216,31 +219,31 @@ class PopMartBot:
         )
 
     def process_product(self, product):
-        """Handle product purchase flow"""
+        """Handle product purchase flow with 30s timeouts"""
         try:
             logging.info(f"🔍 Checking: {product['name']}")
-            self.page.goto(product["url"], timeout=60000)
+            self.page.goto(product["url"], timeout=30000)  # 30s timeout
             
-            # Check stock
+            # Check stock with 30s timeout
             if self.page.locator('button:has-text("SOLD OUT")').count() > 0:
                 logging.warning(f"⛔ Out of stock: {product['name']}")
                 return False
                 
-            # Select size
+            # Select size with 30s timeout
             size_locator = f'div.index_sizeInfoTitle__kpZbS:has-text("{product["size"]}")'
-            self.page.locator(size_locator).click(timeout=10000)
+            self.page.locator(size_locator).click(timeout=30000)
             
             # Set quantity
             for _ in range(product["quantity"] - 1):
                 self.page.locator('div.index_countButton__mJU5Q').last.click()
                 self.random_delay(0.2, 0.5)
             
-            # Add to cart
-            self.page.locator('div.index_usBtn__2KIEx:has-text("ADD TO BAG")').click(timeout=10000)
+            # Add to cart with 30s timeout
+            self.page.locator('div.index_usBtn__2KIEx:has-text("ADD TO BAG")').click(timeout=30000)
             logging.info(f"🛒 Added to cart: {product['name']}")
             
-            # View bag
-            self.page.locator('button:has-text("View Bag")').click(timeout=10000)
+            # View bag with 30s timeout
+            self.page.locator('button:has-text("View Bag")').click(timeout=30000)
             return True
             
         except Exception as e:
@@ -249,17 +252,17 @@ class PopMartBot:
             return False
 
     def monitor_products(self):
-        """Main monitoring loop"""
+        """Main monitoring loop with 30s timeouts"""
         try:
-            # Initialize Playwright
+            # Initialize Playwright with 30s timeout
             self.playwright = sync_playwright().start()
             self.browser = self.launch_browser()
             self.context = self.create_context()
             self.page = self.context.new_page()
             
-            # Apply stealth and navigate
+            # Apply stealth and navigate with 30s timeout
             self.apply_stealth()
-            self.page.goto("https://www.popmart.com/us", timeout=60000)
+            self.page.goto("https://www.popmart.com/us", timeout=30000)
             self.handle_cloudflare()
             
             # Login with retries
@@ -282,13 +285,13 @@ class PopMartBot:
             logging.critical(f"💀 Fatal error: {str(e)}", exc_info=True)
             raise
         finally:
-            # Cleanup resources
+            # Cleanup resources with 30s timeout
             if hasattr(self, 'page') and self.page:
-                self.page.close()
+                self.page.close(timeout=30000)
             if hasattr(self, 'context') and self.context:
-                self.context.close()
+                self.context.close(timeout=30000)
             if hasattr(self, 'browser') and self.browser:
-                self.browser.close()
+                self.browser.close(timeout=30000)
             if hasattr(self, 'playwright') and self.playwright:
                 self.playwright.stop()
             logging.info("🔴 Bot stopped")
