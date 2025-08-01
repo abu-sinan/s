@@ -1,5 +1,6 @@
 import json
 import logging
+import sys
 import requests
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -40,16 +41,21 @@ def load_config():
 # Set up logging with console and Telegram handlers
 def setup_logging(bot_token, chat_id):
     logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    logger.setLevel(logging.DEBUG)  # Capture all levels including DEBUG
 
-    # Console handler
-    console_handler = logging.StreamHandler()
+    # Remove default handlers to avoid duplication
+    logger.handlers.clear()
+
+    # Console handler for terminal output
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    # Telegram handler
+    # Telegram handler for all output
     telegram_handler = TelegramHandler(bot_token, chat_id)
+    telegram_handler.setLevel(logging.DEBUG)  # Capture all levels
     telegram_handler.setFormatter(formatter)
     logger.addHandler(telegram_handler)
 
@@ -166,7 +172,6 @@ def run_bot():
             raise
 
         # Step 10: Complete purchase (simulated)
-        # Note: Actual payment requires real payment details and is not fully automated here
         logging.info("Payment step reached. (Purchase simulation complete)")
 
     except Exception as e:
