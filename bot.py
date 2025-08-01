@@ -33,6 +33,7 @@ class TelegramLogger:
 class PopMartBot:
     def __init__(self, config_path):
         self.config = self.load_config(config_path)
+        self.playwright = None
         self.browser = None
         self.context = None
         self.page = None
@@ -169,16 +170,56 @@ class PopMartBot:
             logging.error(f"Login failed: {str(e)}")
             return False
 
+    def launch_browser(self):
+        """Configure browser with anti-detection settings"""
+        return self.playwright.chromium.launch(
+            headless=self.config.get("headless", True),
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage"
+            ],
+            timeout=60000
+        )
+
+    def create_context(self):
+        """Create stealth browser context"""
+        return self.browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            viewport={"width": 1366, "height": 768},
+            locale="en-US",
+            timezone_id="America/New_York",
+            geolocation={"longitude": -74.006, "latitude": 40.7128},
+            permissions=["geolocation"]
+        )
+
+    def process_product(self, product):
+        """Handle individual product purchase flow"""
+        logging.info(f"🔍 Checking: {product['name']}")
+        self.page.goto(product["url"], timeout=60000)
+        
+        if self.page.locator('button:has-text("SOLD OUT")').count() > 0:
+            logging.warning(f"⛔ Out of stock: {product['name']}")
+            return False
+            
+        # Purchase logic here...
+        logging.info(f"✅ Added to cart: {product['name']}")
+        return True
+
     def monitor_products(self):
         """Main monitoring loop with full logging"""
         try:
+            # Initialize Playwright
+            self.playwright = sync_playwright().start()
+            
             # Browser setup
             self.browser = self.launch_browser()
             self.context = self.create_context()
             self.page = self.context.new_page()
             
             logging.info("🌐 Navigating to PopMart")
-            self.page.goto("https://www.popmart.com/us")
+            self.page.goto("https://www.popmart.com/us", timeout=60000)
             self.apply_stealth()
             
             if not self.login():
@@ -200,44 +241,16 @@ class PopMartBot:
             logging.critical(f"🆘 Bot crashed: {str(e)}", exc_info=True)
             raise
         finally:
-            if self.browser:
+            # Cleanup resources in reverse order
+            if hasattr(self, 'page') and self.page:
+                self.page.close()
+            if hasattr(self, 'context') and self.context:
+                self.context.close()
+            if hasattr(self, 'browser') and self.browser:
                 self.browser.close()
+            if hasattr(self, 'playwright') and self.playwright:
+                self.playwright.stop()
             logging.info("🔴 Bot stopped")
-
-    def launch_browser(self):
-        """Configure browser with anti-detection settings"""
-        return sync_playwright().chromium.launch(
-            headless=self.config.get("headless", True),
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-setuid-sandbox"
-            ]
-        )
-
-    def create_context(self):
-        """Create stealth browser context"""
-        return self.browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-            viewport={"width": 1366, "height": 768},
-            locale="en-US",
-            timezone_id="America/New_York",
-            geolocation={"longitude": -74.006, "latitude": 40.7128},
-            permissions=["geolocation"]
-        )
-
-    def process_product(self, product):
-        """Handle individual product purchase flow"""
-        logging.info(f"🔍 Checking: {product['name']}")
-        self.page.goto(product["url"])
-        
-        if self.page.locator('button:has-text("SOLD OUT")').count() > 0:
-            logging.warning(f"⛔ Out of stock: {product['name']}")
-            return False
-            
-        # Purchase logic here...
-        logging.info(f"✅ Added to cart: {product['name']}")
-        return True
 
 if __name__ == "__main__":
     bot = PopMartBot("config.json")
