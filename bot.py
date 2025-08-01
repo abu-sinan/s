@@ -2,11 +2,19 @@ import json
 import logging
 import sys
 import requests
+import http.client
+import urllib3
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select
+
+# Suppress requests debug output
+http.client.HTTPConnection.debuglevel = 0
+urllib3.disable_warnings()
+logging.getLogger("requests").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 # Custom logging handler to send messages to Telegram
 class TelegramHandler(logging.Handler):
@@ -41,21 +49,19 @@ def load_config():
 # Set up logging with console and Telegram handlers
 def setup_logging(bot_token, chat_id):
     logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)  # Capture all levels including DEBUG
-
-    # Remove default handlers to avoid duplication
+    logger.setLevel(logging.DEBUG)  # Capture all levels
     logger.handlers.clear()
 
-    # Console handler for terminal output
+    # Console handler for all output
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.DEBUG)
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    # Telegram handler for all output
+    # Telegram handler for INFO and above
     telegram_handler = TelegramHandler(bot_token, chat_id)
-    telegram_handler.setLevel(logging.DEBUG)  # Capture all levels
+    telegram_handler.setLevel(logging.INFO)  # Only INFO, WARNING, ERROR
     telegram_handler.setFormatter(formatter)
     logger.addHandler(telegram_handler)
 
