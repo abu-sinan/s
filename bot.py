@@ -1,6 +1,7 @@
 import time
 import logging
 import random
+import os
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -21,11 +22,12 @@ PRODUCT_URLS = [
 ]
 LOGIN_URL = "https://www.popmart.com/us/user/login?redirect=%2Faccount"
 USERNAME = "abusinan1523@gmail.com"
-PASSWORD = "Sinan563."  # Replace with your password
+PASSWORD = "your_password"  # Replace with your password
 PROXY = None  # Replace with "http://user:pass@host:port" if using proxies
 CHECK_INTERVAL = 5  # Seconds between checks
 MAX_ATTEMPTS = 100  # Max monitoring attempts per product
 MAX_RETRY_OOPS = 3  # Max retries for "Oops" error
+CHROME_BINARY_PATH = "/usr/bin/google-chrome"  # Chrome binary path in Codespaces
 
 # Selectors from provided HTML
 SELECTOR_LOCATION_POPUP = "div.index_ipWarnContainer__d5qTd"
@@ -57,20 +59,26 @@ def setup_driver():
     chrome_options.add_argument(f"user-agent={random_user_agent()}")
     chrome_options.add_argument("--disable-extensions")
     chrome_options.add_argument("--start-maximized")
+    chrome_options.binary_location = CHROME_BINARY_PATH  # Explicitly set Chrome binary
     
     if PROXY:
         chrome_options.add_argument(f"--proxy-server={PROXY}")
     
-    driver = Chrome(options=chrome_options, headless=False)  # Set headless=True for no UI
-    driver.set_page_load_timeout(30)
-    return driver
+    try:
+        driver = Chrome(options=chrome_options, headless=False)  # Set headless=True for no UI
+        driver.set_page_load_timeout(30)
+        logger.info("Chrome driver initialized successfully.")
+        return driver
+    except Exception as e:
+        logger.error(f"Failed to initialize Chrome driver: {e}")
+        raise
 
 def random_user_agent():
     """Return a random user-agent to avoid detection."""
     user_agents = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
     ]
     return random.choice(user_agents)
 
