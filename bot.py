@@ -451,4 +451,55 @@ class PopMartMonitor:
                             # You can choose to break here or continue monitoring
                             # break
                         else:
-     
+                            logger.info("❌ Product not available yet...")
+                        
+                        consecutive_errors = 0  # Reset error counter on success
+                        
+                        # Wait before next check
+                        logger.info(f"⏳ Waiting {self.check_interval} seconds before next check...")
+                        await asyncio.sleep(self.check_interval)
+                        
+                    except Exception as e:
+                        consecutive_errors += 1
+                        logger.error(f"Error during monitoring cycle ({consecutive_errors}/{self.max_consecutive_errors}): {e}")
+                        
+                        if consecutive_errors >= self.max_consecutive_errors:
+                            error_msg = f"❌ Monitor stopped after {self.max_consecutive_errors} consecutive errors. Last error: {e}"
+                            logger.error(error_msg)
+                            
+                            if self.config.get('notifications', 'send_error_notifications'):
+                                await self.send_telegram_message(error_msg)
+                            break
+                        
+                        await asyncio.sleep(30)  # Wait 30 seconds on error
+                        
+            except KeyboardInterrupt:
+                stop_msg = "⏹️ PopMart monitor stopped by user"
+                logger.info(stop_msg)
+                await self.send_telegram_message(stop_msg)
+            finally:
+                await browser.close()
+
+async def main():
+    """Main function to run the monitor"""
+    try:
+        # Load configuration
+        config_manager = ConfigManager("config.json")
+        config_manager.validate_config()
+        
+        # Create and run monitor
+        monitor = PopMartMonitor(config_manager)
+        await monitor.monitor_product()
+        
+    except FileNotFoundError:
+        print("\n❌ Configuration file not found!")
+        print("Please create a 'config.json' file with your settings.")
+        print("Check the example configuration for the required format.")
+    except ValueError as e:
+        print(f"\n❌ Configuration error: {e}")
+        print("Please check your config.json file.")
+    except Exception as e:
+        print(f"\n❌ Unexpected error: {e}")
+
+if __name__ == "__main__":
+    asyncio.run(main())
