@@ -87,14 +87,41 @@ class PopMartMonitor:
         # Monitoring settings
         self.check_interval = self.config.get('monitoring', 'check_interval') or 60
         self.max_consecutive_errors = self.config.get('monitoring', 'max_consecutive_errors') or 5
-        self.headless_mode = self.config.get('monitoring', 'headless_mode') or False
+        self.headless_mode = self.config.get('monitoring', 'headless_mode')
+        
+        # Auto-detect headless mode if not specified
+        if self.headless_mode is None:
+            self.headless_mode = self.detect_headless_environment()
         
         # Browser settings
-        self.user_agent = self.config.get('browser_settings', 'user_agent') or 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        self.user_agent = self.config.get('browser_settings', 'user_agent') or 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
         self.viewport_width = self.config.get('browser_settings', 'viewport_width') or 1920
         self.viewport_height = self.config.get('browser_settings', 'viewport_height') or 1080
         self.timeout = self.config.get('browser_settings', 'timeout') or 30000
+
+    def detect_headless_environment(self):
+        """Auto-detect if we need to run in headless mode"""
+        # Check if we're in a headless environment
+        display = os.environ.get('DISPLAY')
+        if not display:
+            logger.info("No DISPLAY environment variable found - running in headless mode")
+            return True
         
+        # Check if we're in a common server environment
+        server_indicators = ['SSH_CLIENT', 'SSH_TTY', 'SSH_CONNECTION']
+        if any(indicator in os.environ for indicator in server_indicators):
+            logger.info("SSH session detected - running in headless mode")
+            return True
+        
+        # Check for common CI/CD environments
+        ci_indicators = ['CI', 'GITHUB_ACTIONS', 'GITLAB_CI', 'TRAVIS', 'JENKINS_URL']
+        if any(indicator in os.environ for indicator in ci_indicators):
+            logger.info("CI/CD environment detected - running in headless mode")
+            return True
+        
+        logger.info("Display environment detected - running with visible browser")
+        return False
+
     async def send_telegram_message(self, message):
         """Send a message via Telegram Bot API"""
         url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
@@ -374,6 +401,7 @@ class PopMartMonitor:
     async def monitor_product(self):
         """Main monitoring function"""
         logger.info(f"Starting PopMart monitor for: {self.product_url}")
+        logger.info(f"Headless mode: {self.headless_mode}")
         
         # Send start notification if enabled
         if self.config.get('notifications', 'send_start_notification'):
@@ -385,24 +413,34 @@ class PopMartMonitor:
 📦 <b>Quantity:</b> {self.desired_quantity}
 ⏰ <b>Check Interval:</b> {self.check_interval} seconds
 👤 <b>Account:</b> {self.email if self.email else 'Guest'}
+🖥️ <b>Mode:</b> {'Headless' if self.headless_mode else 'Visible'}
 
 🔍 Monitoring started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             """
             await self.send_telegram_message(start_message.strip())
         
         async with async_playwright() as p:
-            # Launch browser with settings from config
+            # Enhanced browser launch args for headless environments
+            browser_args = [
+                '--disable-blink-features=AutomationControlled',
+                '--no-first-run',
+                '--disable-extensions',
+                '--disable-dev-shm-usage',
+                '--disable-background-timer-throttling',
+                '--disable-backgrounding-occluded-windows',
+                '--disable-renderer-backgrounding',
+                '--no-sandbox',  # Important for headless environments
+                '--disable-setuid-sandbox',
+                '--disable-gpu',  # Disable GPU in headless mode
+                '--disable-software-rasterizer',
+                '--single-process',  # Use single process
+                '--no-zygote'  # Disable zygote process
+            ]
+            
+            # Launch browser with enhanced settings
             browser = await p.chromium.launch(
                 headless=self.headless_mode,
-                args=[
-                    '--disable-blink-features=AutomationControlled',
-                    '--no-first-run',
-                    '--disable-extensions',
-                    '--disable-dev-shm-usage',
-                    '--disable-background-timer-throttling',
-                    '--disable-backgrounding-occluded-windows',
-                    '--disable-renderer-backgrounding'
-                ]
+                args=browser_args
             )
             
             # Create new page with settings from config
