@@ -1,441 +1,439 @@
-import asyncio
-import logging
-from datetime import datetime
-from playwright.async_api import async_playwright
-import aiohttp
+#!/usr/bin/env python3
+"""
+Popmart Labubu Product Monitor
+Advanced monitoring script with Cloudflare bypass and Discord notifications
+"""
+
 import json
-import os
+import time
 import random
+import logging
+import requests
+import cloudscraper
+from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.common.exceptions import TimeoutException, WebDriverException
+import undetected_chromedriver as uc
+from discord_webhook import DiscordWebhook, DiscordEmbed
+import schedule
+from datetime import datetime
+import sys
+import os
+import threading
+from fake_useragent import UserAgent
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-class ConfigManager:
-    def __init__(self, config_file="config.json"):
+class PopmartMonitor:
+    def __init__(self, config_file='config.json'):
         self.config_file = config_file
         self.config = self.load_config()
-    
+        self.session = cloudscraper.create_scraper()
+        self.driver = None
+        self.ua = UserAgent()
+        self.setup_logging()
+        self.last_check_time = {}
+        
+    def setup_logging(self):
+        """Setup logging configuration"""
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler('popmart_monitor.log'),
+                logging.StreamHandler()
+            ]
+        )
+        self.logger = logging.getLogger(__name__)
+
     def load_config(self):
-        if not os.path.exists(self.config_file):
-            logger.error(f"Configuration file '{self.config_file}' not found!")
-            raise FileNotFoundError(f"Configuration file '{self.config_file}' not found")
-        
+        """Load configuration from JSON file"""
         try:
-            with open(self.config_file, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-            logger.info(f"Configuration loaded from {self.config_file}")
-            return config
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in configuration file: {e}")
-            raise
-    
-    def get(self, *keys):
-        value = self.config
-        for key in keys:
-            if isinstance(value, dict) and key in value:
-                value = value[key]
+            with open(self.config_file, 'r') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            self.logger.error(f"Config file {self.config_file} not found!")
+            return self.create_default_config()
+
+    def create_default_config(self):
+        """Create default configuration file"""
+        default_config = {
+            "discord_webhook_url": "",
+            "account": {
+                "email": "",
+                "password": ""
+            },
+            "products": [
+                {
+                    "name": "LABUBU × PRONOUNCE - WINGS OF FORTUNE Vinyl Plush Hanging Card",
+                    "url": "https://www.popmart.com/us/products/1584/LABUBU-%C3%97-PRONOUNCE---WINGS-OF-FORTUNE-Vinyl-Plush-Hanging-Card",
+                    "target_price": 19.99,
+                    "notify_price_changes": True
+                }
+            ],
+            "monitoring": {
+                "check_interval_minutes": 2,
+                "max_check_interval_minutes": 5,
+                "random_delay": True,
+                "human_behavior": True
+            },
+            "cloudflare": {
+                "max_retries": 3,
+                "retry_delay": 10,
+                "use_selenium_fallback": True
+            }
+        }
+        
+        with open(self.config_file, 'w') as f:
+            json.dump(default_config, f, indent=4)
+        
+        self.logger.info(f"Created default config file: {self.config_file}")
+        self.logger.info("Please update the config file with your Discord webhook and account details!")
+        return default_config
+
+    def setup_selenium(self):
+        """Setup undetected Chrome driver"""
+        try:
+            options = uc.ChromeOptions()
+            options.add_argument('--no-sandbox')
+            options.add_argument('--disable-dev-shm-usage')
+            options.add_argument('--disable-blink-features=AutomationControlled')
+            options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            options.add_experimental_option('useAutomationExtension', False)
+            options.add_argument(f'--user-agent={self.ua.random}')
+            
+            # Headless mode for server deployment
+            options.add_argument('--headless')
+            options.add_argument('--disable-gpu')
+            
+            self.driver = uc.Chrome(options=options)
+            self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to setup Selenium driver: {e}")
+            return False
+
+    def human_behavior_delay(self):
+        """Add random human-like delays"""
+        if self.config.get('monitoring', {}).get('human_behavior', True):
+            delay = random.uniform(1, 5)
+            time.sleep(delay)
+
+    def simulate_mouse_movement(self):
+        """Simulate human mouse movements"""
+        if self.driver and self.config.get('monitoring', {}).get('human_behavior', True):
+            try:
+                actions = ActionChains(self.driver)
+                # Random mouse movements
+                for _ in range(random.randint(1, 3)):
+                    x = random.randint(100, 800)
+                    y = random.randint(100, 600)
+                    actions.move_by_offset(x, y).perform()
+                    time.sleep(random.uniform(0.1, 0.5))
+            except Exception:
+                pass
+
+    def send_discord_notification(self, title, description, color=0x00ff00, fields=None, image_url=None):
+        """Send notification to Discord"""
+        webhook_url = self.config.get('discord_webhook_url')
+        if not webhook_url:
+            self.logger.error("Discord webhook URL not configured!")
+            return False
+
+        try:
+            webhook = DiscordWebhook(url=webhook_url)
+            embed = DiscordEmbed(title=title, description=description, color=color)
+            embed.set_timestamp()
+            
+            if fields:
+                for field in fields:
+                    embed.add_embed_field(
+                        name=field.get('name', ''),
+                        value=field.get('value', ''),
+                        inline=field.get('inline', False)
+                    )
+            
+            if image_url:
+                embed.set_image(url=image_url)
+            
+            webhook.add_embed(embed)
+            response = webhook.execute()
+            
+            if response.status_code == 200:
+                self.logger.info(f"Discord notification sent: {title}")
+                return True
             else:
-                return None
-        return value
-    
-    def validate_config(self):
-        required_fields = [
-            ('telegram', 'bot_token'),
-            ('telegram', 'chat_id'),
-            ('product_settings', 'url')
-        ]
-        
-        missing_fields = []
-        for field_path in required_fields:
-            if not self.get(*field_path):
-                missing_fields.append('.'.join(field_path))
-        
-        if missing_fields:
-            logger.error(f"Missing required configuration fields: {', '.join(missing_fields)}")
-            raise ValueError(f"Missing required configuration: {missing_fields}")
-        
-        logger.info("Configuration validation passed")
+                self.logger.error(f"Failed to send Discord notification: {response.status_code}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Error sending Discord notification: {e}")
+            return False
 
-class StealthPopMartMonitor:
-    def __init__(self, config_manager):
-        self.config = config_manager
+    def handle_cloudflare_challenge(self, url):
+        """Handle Cloudflare challenges using multiple methods"""
+        self.logger.info("Handling Cloudflare challenge...")
         
-        # Telegram settings
-        self.telegram_bot_token = self.config.get('telegram', 'bot_token')
-        self.telegram_chat_id = self.config.get('telegram', 'chat_id')
-        
-        # Account settings
-        self.email = self.config.get('popmart_account', 'email')
-        self.password = self.config.get('popmart_account', 'password')
-        
-        # Product settings
-        self.product_url = self.config.get('product_settings', 'url')
-        self.preferred_size = self.config.get('product_settings', 'size') or "Single box"
-        self.desired_quantity = self.config.get('product_settings', 'quantity') or 1
-        
-        # Monitoring settings
-        self.check_interval = self.config.get('monitoring', 'check_interval') or 60
-        self.max_consecutive_errors = self.config.get('monitoring', 'max_consecutive_errors') or 5
-        
-        # Always use headless mode for stealth
-        self.headless_mode = True
+        # Method 1: CloudScraper
+        try:
+            response = self.session.get(url, timeout=30)
+            if response.status_code == 200 and "cf-browser-verification" not in response.text.lower():
+                return response
+        except Exception as e:
+            self.logger.warning(f"CloudScraper failed: {e}")
 
-    async def send_telegram_message(self, message):
-        """Send a message via Telegram Bot API"""
-        url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
-        payload = {
-            "chat_id": self.telegram_chat_id,
-            "text": message,
-            "parse_mode": "HTML"
+        # Method 2: Selenium with undetected-chromedriver
+        if self.config.get('cloudflare', {}).get('use_selenium_fallback', True):
+            try:
+                if not self.driver:
+                    if not self.setup_selenium():
+                        return None
+                
+                self.driver.get(url)
+                self.human_behavior_delay()
+                
+                # Wait for Cloudflare challenge to complete
+                WebDriverWait(self.driver, 30).until(
+                    lambda driver: "cf-browser-verification" not in driver.page_source.lower()
+                )
+                
+                # Additional wait for page to fully load
+                time.sleep(random.uniform(3, 7))
+                
+                return self.driver.page_source
+                
+            except TimeoutException:
+                self.logger.error("Cloudflare challenge timeout")
+            except Exception as e:
+                self.logger.error(f"Selenium fallback failed: {e}")
+        
+        return None
+
+    def extract_product_info(self, html_content, product_url):
+        """Extract product information from HTML"""
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        product_info = {
+            'name': '',
+            'price': '',
+            'in_stock': False,
+            'image_url': '',
+            'direct_buy_url': product_url
         }
         
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload) as response:
-                    if response.status == 200:
-                        logger.info("Telegram message sent successfully")
-                    else:
-                        logger.error(f"Failed to send Telegram message: {response.status}")
-        except Exception as e:
-            logger.error(f"Error sending Telegram message: {e}")
-
-    async def create_stealth_browser(self, playwright):
-        """Create a stealth browser that looks like a real user"""
-        
-        # Random user agents to rotate
-        user_agents = [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        ]
-        
-        # Enhanced stealth arguments
-        browser_args = [
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-accelerated-2d-canvas",
-            "--no-first-run",
-            "--no-zygote",
-            "--single-process",
-            "--disable-gpu",
-            "--disable-background-timer-throttling",
-            "--disable-backgrounding-occluded-windows",
-            "--disable-renderer-backgrounding",
-            "--disable-features=TranslateUI",
-            "--disable-ipc-flooding-protection",
-            "--disable-blink-features=AutomationControlled",
-            "--disable-extensions",
-            "--disable-plugins",
-            "--disable-default-apps",
-            "--disable-web-security",
-            "--disable-features=VizDisplayCompositor",
-            "--window-size=1920,1080",
-            "--user-agent=" + random.choice(user_agents)
-        ]
-        
-        # Launch browser
-        browser = await playwright.chromium.launch(
-            headless=self.headless_mode,
-            args=browser_args
-        )
-        
-        # Create context with stealth settings
-        context = await browser.new_context(
-            viewport={'width': 1920, 'height': 1080},
-            user_agent=random.choice(user_agents),
-            locale='en-US',
-            timezone_id='America/New_York',
-            permissions=['geolocation'],
-            geolocation={'longitude': -74.006, 'latitude': 40.7128},  # New York
-            color_scheme='light',
-            extra_http_headers={
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'none',
-                'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-                'Sec-Ch-Ua-Mobile': '?0',
-                'Sec-Ch-Ua-Platform': '"Windows"',
-                'Cache-Control': 'max-age=0',
-                'Upgrade-Insecure-Requests': '1'
+            # Extract product name from title or meta tags
+            title_tag = soup.find('title')
+            if title_tag:
+                product_info['name'] = title_tag.get_text().strip()
+            
+            # Check stock status - Key indicators
+            stock_indicators = {
+                'in_stock': [
+                    'ADD TO BAG',
+                    'index_red__kx6Ql',  # Red button class for add to bag
+                    'ADD TO CART'
+                ],
+                'out_of_stock': [
+                    'NOTIFY ME WHEN AVAILABLE',
+                    'index_black__RgEgP',  # Black button class for notify
+                    'Out of Stock',
+                    'SOLD OUT'
+                ]
             }
-        )
-        
-        # Create page
-        page = await context.new_page()
-        
-        # Add stealth JavaScript
-        await page.add_init_script("""
-            // Remove webdriver property
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined,
-            });
             
-            // Mock languages
-            Object.defineProperty(navigator, 'languages', {
-                get: () => ['en-US', 'en'],
-            });
+            page_text = html_content.lower()
             
-            // Mock plugins
-            Object.defineProperty(navigator, 'plugins', {
-                get: () => [1, 2, 3, 4, 5],
-            });
+            # Check for in-stock indicators
+            for indicator in stock_indicators['in_stock']:
+                if indicator.lower() in page_text:
+                    product_info['in_stock'] = True
+                    break
             
-            // Override permissions
-            const originalQuery = window.navigator.permissions.query;
-            window.navigator.permissions.query = (parameters) => (
-                parameters.name === 'notifications' ?
-                Promise.resolve({ state: Notification.permission }) :
-                originalQuery(parameters)
-            );
+            # Check for out-of-stock indicators (override in_stock if found)
+            for indicator in stock_indicators['out_of_stock']:
+                if indicator.lower() in page_text:
+                    product_info['in_stock'] = False
+                    break
             
-            // Mock chrome object
-            window.chrome = {
-                runtime: {},
-            };
-            
-            // Remove automation indicators
-            delete window.__playwright;
-            delete window.__pw_manual;
-            
-            // Mock touch support
-            Object.defineProperty(navigator, 'maxTouchPoints', {
-                get: () => 1,
-            });
-        """)
-        
-        return browser, page
-
-    async def human_like_navigation(self, page, url):
-        """Navigate like a human with random delays"""
-        
-        # Random delay before navigation
-        await asyncio.sleep(random.uniform(1, 3))
-        
-        # Navigate to homepage first (more human-like)
-        logger.info("🏠 Visiting homepage first...")
-        try:
-            await page.goto("https://www.popmart.com/us", wait_until="domcontentloaded", timeout=30000)
-            await asyncio.sleep(random.uniform(2, 4))
-        except:
-            logger.warning("Could not visit homepage, going directly to product")
-        
-        # Now navigate to the actual product
-        logger.info(f"🎯 Navigating to product: {url}")
-        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        
-        # Random mouse movements and scrolling
-        await page.mouse.move(random.randint(100, 800), random.randint(100, 600))
-        await page.mouse.move(random.randint(100, 800), random.randint(100, 600))
-        
-        # Random scroll
-        await page.evaluate(f"window.scrollTo(0, {random.randint(100, 500)})")
-        await asyncio.sleep(random.uniform(1, 2))
-        
-        # Wait for page to be fully loaded
-        await page.wait_for_load_state("networkidle", timeout=15000)
-
-    async def handle_popups_and_modals(self, page):
-        """Handle all popups and modals"""
-        try:
-            # Handle location popup
-            location_close = await page.query_selector('.index_closeIcon__oBwY4')
-            if location_close:
-                logger.info("Closing location popup")
-                await location_close.click()
-                await asyncio.sleep(1)
-            
-            # Handle privacy policy
-            accept_btn = await page.query_selector('.policy_acceptBtn__ZNU71')
-            if accept_btn:
-                logger.info("Accepting privacy policy")
-                await accept_btn.click()
-                await asyncio.sleep(1)
-            
-            # Handle any error modals
-            error_modal = await page.query_selector('.ant-modal-content')
-            if error_modal:
-                ok_btn = await error_modal.query_selector('.layout_wafErrorModalButton__yJdyc')
-                if ok_btn:
-                    logger.info("Handling error modal")
-                    await ok_btn.click()
-                    await asyncio.sleep(1)
-                    
-        except Exception as e:
-            logger.debug(f"Error handling popups: {e}")
-
-    async def check_product_availability(self, page):
-        """Check if product is available with multiple methods"""
-        try:
-            # Wait a bit for dynamic content
-            await asyncio.sleep(3)
-            
-            # Handle popups first
-            await self.handle_popups_and_modals(page)
-            
-            # Get product title
-            product_title = "PopMart Product"
-            try:
-                title_element = await page.query_selector('h1, [class*="title"], .product-name')
-                if title_element:
-                    product_title = await title_element.inner_text()
-            except:
-                pass
-            
-            logger.info(f"📦 Checking product: {product_title}")
-            
-            # Method 1: Check the exact PopMart button
-            add_to_bag_btn = await page.query_selector('.index_usBtn__2KlEx.index_red__kx6Ql.index_btnFull__F7k90')
-            if add_to_bag_btn:
-                button_text = await add_to_bag_btn.inner_text()
-                is_visible = await add_to_bag_btn.is_visible()
-                is_enabled = await add_to_bag_btn.is_enabled()
-                
-                logger.info(f"🔘 Button found: '{button_text}' | Visible: {is_visible} | Enabled: {is_enabled}")
-                
-                if is_visible and is_enabled and "ADD TO BAG" in button_text.upper():
-                    logger.info("🎉 PRODUCT IS AVAILABLE!")
-                    
-                    # Send notification
-                    message = f"""
-🎉 <b>PopMart Product Available!</b>
-
-🧸 <b>Product:</b> {product_title}
-📏 <b>Size:</b> {self.preferred_size}
-📦 <b>Quantity:</b> {self.desired_quantity}
-🔗 <b>URL:</b> {self.product_url}
-⏰ <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-✅ The "ADD TO BAG" button is now active!
-🏃‍♂️ Hurry up and complete your purchase!
-                    """
-                    
-                    await self.send_telegram_message(message.strip())
-                    return True
-            
-            # Method 2: Check for any button with "add to bag" text
-            all_buttons = await page.query_selector_all('button, div[role="button"], .btn')
-            for button in all_buttons:
-                try:
-                    text = await button.inner_text()
-                    if "ADD TO BAG" in text.upper() or "ADD TO CART" in text.upper():
-                        is_visible = await button.is_visible()
-                        is_enabled = await button.is_enabled()
-                        
-                        logger.info(f"🔘 Found button: '{text}' | Visible: {is_visible} | Enabled: {is_enabled}")
-                        
-                        if is_visible and is_enabled:
-                            logger.info("🎉 PRODUCT IS AVAILABLE!")
-                            return True
-                except:
-                    continue
-            
-            # Method 3: Look for out of stock indicators
-            out_of_stock_indicators = [
-                'sold out', 'out of stock', 'unavailable', 'coming soon'
+            # Extract price
+            price_patterns = [
+                r'\$[\d,]+\.?\d*',
+                r'price["\s]*:[\s]*["\$]*([\d,]+\.?\d*)',
+                r'[\$][\d,]+\.?\d*'
             ]
             
-            page_text = await page.inner_text('body')
-            for indicator in out_of_stock_indicators:
-                if indicator.lower() in page_text.lower():
-                    logger.info(f"❌ Found out of stock indicator: {indicator}")
-                    return False
+            import re
+            for pattern in price_patterns:
+                price_match = re.search(pattern, html_content, re.IGNORECASE)
+                if price_match:
+                    product_info['price'] = price_match.group(0)
+                    break
             
-            logger.info("❌ Product not available - no active ADD TO BAG button found")
-            return False
+            # Extract image URL
+            img_tags = soup.find_all('img', {'alt': 'POP MART'})
+            for img in img_tags:
+                src = img.get('src', '')
+                if 'popmart.com' in src and ('jpg' in src or 'png' in src or 'webp' in src):
+                    product_info['image_url'] = src
+                    break
             
         except Exception as e:
-            logger.error(f"Error checking availability: {e}")
-            return False
-
-    async def monitor_product(self):
-        """Main monitoring function with stealth"""
-        logger.info(f"🥷 Starting STEALTH PopMart monitor")
-        logger.info(f"🎯 Target: {self.product_url}")
+            self.logger.error(f"Error extracting product info: {e}")
         
-        # Send start notification
-        if self.config.get('notifications', 'send_start_notification', True):
-            start_message = f"""
-🥷 <b>Stealth PopMart Monitor Started!</b>
+        return product_info
 
-🧸 <b>Product:</b> {self.product_url}
-📏 <b>Size:</b> {self.preferred_size}  
-📦 <b>Quantity:</b> {self.desired_quantity}
-⏰ <b>Check Interval:</b> {self.check_interval} seconds
-🛡️ <b>Mode:</b> Anti-Detection Stealth
-
-🔍 Monitoring started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-            """
-            await self.send_telegram_message(start_message.strip())
+    def check_product(self, product_config):
+        """Check individual product availability"""
+        product_url = product_config['url']
+        product_name = product_config['name']
         
-        async with async_playwright() as p:
-            browser, page = await self.create_stealth_browser(p)
-            
+        self.logger.info(f"Checking product: {product_name}")
+        
+        max_retries = self.config.get('cloudflare', {}).get('max_retries', 3)
+        retry_delay = self.config.get('cloudflare', {}).get('retry_delay', 10)
+        
+        for attempt in range(max_retries):
             try:
-                consecutive_errors = 0
+                # Add random delay between requests
+                if attempt > 0:
+                    time.sleep(retry_delay + random.uniform(1, 5))
                 
-                while True:
-                    try:
-                        logger.info(f"🔍 Checking product at {datetime.now().strftime('%H:%M:%S')}")
+                # Get page content
+                content = self.handle_cloudflare_challenge(product_url)
+                
+                if content:
+                    if isinstance(content, requests.Response):
+                        html_content = content.text
+                    else:
+                        html_content = content
+                    
+                    # Extract product information
+                    product_info = self.extract_product_info(html_content, product_url)
+                    
+                    # Check if product is now in stock
+                    if product_info['in_stock']:
+                        self.send_stock_notification(product_info, product_config)
+                        return True
+                    else:
+                        self.logger.info(f"Product still out of stock: {product_name}")
+                        return False
                         
-                        # Human-like navigation
-                        await self.human_like_navigation(page, self.product_url)
-                        
-                        # Check availability
-                        is_available = await self.check_product_availability(page)
-                        
-                        if is_available:
-                            logger.info("🎉 Product is available! Alert sent.")
-                            # Continue monitoring or break here
-                            # break
-                        else:
-                            logger.info("❌ Product not available yet...")
-                        
-                        consecutive_errors = 0
-                        
-                        # Random wait time (more human-like)
-                        wait_time = self.check_interval + random.randint(-10, 10)
-                        logger.info(f"⏳ Waiting {wait_time} seconds before next check...")
-                        await asyncio.sleep(wait_time)
-                        
-                    except Exception as e:
-                        consecutive_errors += 1
-                        logger.error(f"Error ({consecutive_errors}/{self.max_consecutive_errors}): {e}")
-                        
-                        if consecutive_errors >= self.max_consecutive_errors:
-                            error_msg = f"❌ Stealth monitor stopped after {self.max_consecutive_errors} errors. Last: {e}"
-                            logger.error(error_msg)
-                            await self.send_telegram_message(error_msg)
-                            break
-                        
-                        # Longer wait on error
-                        await asyncio.sleep(60)
-                        
-            except KeyboardInterrupt:
-                stop_msg = "⏹️ Stealth monitor stopped by user"
-                logger.info(stop_msg)
-                await self.send_telegram_message(stop_msg)
-            finally:
-                await browser.close()
+                else:
+                    self.logger.warning(f"Failed to get content for {product_name} (attempt {attempt + 1})")
+                    
+            except Exception as e:
+                self.logger.error(f"Error checking product {product_name} (attempt {attempt + 1}): {e}")
+                
+                # Send error notification
+                self.send_discord_notification(
+                    title="🚨 Monitor Error",
+                    description=f"Error checking product: {product_name}\nError: {str(e)}",
+                    color=0xff0000
+                )
+        
+        self.logger.error(f"Failed to check product after {max_retries} attempts: {product_name}")
+        return False
 
-async def main():
-    try:
-        config_manager = ConfigManager("config.json")
-        config_manager.validate_config()
+    def send_stock_notification(self, product_info, product_config):
+        """Send stock availability notification"""
+        fields = [
+            {
+                'name': '💰 Price',
+                'value': product_info.get('price', 'N/A'),
+                'inline': True
+            },
+            {
+                'name': '🔗 Direct Buy Link',
+                'value': f"[BUY NOW]({product_info['direct_buy_url']})",
+                'inline': True
+            },
+            {
+                'name': '⏰ Time',
+                'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'inline': True
+            }
+        ]
         
-        monitor = StealthPopMartMonitor(config_manager)
-        await monitor.monitor_product()
+        self.send_discord_notification(
+            title="🎉 PRODUCT IN STOCK!",
+            description=f"**{product_info['name']}** is now available!",
+            color=0x00ff00,
+            fields=fields,
+            image_url=product_info.get('image_url')
+        )
+
+    def monitor_products(self):
+        """Monitor all configured products"""
+        products = self.config.get('products', [])
         
-    except Exception as e:
-        print(f"❌ Error: {e}")
+        if not products:
+            self.logger.warning("No products configured for monitoring!")
+            return
+        
+        self.logger.info(f"Starting monitoring cycle for {len(products)} products...")
+        
+        for product in products:
+            try:
+                self.check_product(product)
+                
+                # Random delay between product checks
+                if self.config.get('monitoring', {}).get('random_delay', True):
+                    delay = random.uniform(10, 30)
+                    time.sleep(delay)
+                    
+            except Exception as e:
+                self.logger.error(f"Error in monitoring cycle: {e}")
+                self.send_discord_notification(
+                    title="🚨 Monitor Error",
+                    description=f"Critical error in monitoring cycle: {str(e)}",
+                    color=0xff0000
+                )
+
+    def cleanup(self):
+        """Cleanup resources"""
+        if self.driver:
+            try:
+                self.driver.quit()
+            except Exception:
+                pass
+
+    def run_monitor(self):
+        """Main monitoring loop"""
+        self.logger.info("🚀 Starting Popmart Monitor...")
+        
+        # Send startup notification
+        self.send_discord_notification(
+            title="🤖 Monitor Started",
+            description="Popmart Labubu Monitor is now running!",
+            color=0x0099ff
+        )
+        
+        try:
+            # Schedule monitoring
+            interval = self.config.get('monitoring', {}).get('check_interval_minutes', 2)
+            schedule.every(interval).minutes.do(self.monitor_products)
+            
+            while True:
+                schedule.run_pending()
+                time.sleep(30)  # Check schedule every 30 seconds
+                
+        except KeyboardInterrupt:
+            self.logger.info("Monitor stopped by user")
+        except Exception as e:
+            self.logger.error(f"Critical error in main loop: {e}")
+            self.send_discord_notification(
+                title="💀 Monitor Stopped",
+                description=f"Monitor stopped due to critical error: {str(e)}",
+                color=0xff0000
+            )
+        finally:
+            self.cleanup()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    monitor = PopmartMonitor()
+    monitor.run_monitor()
