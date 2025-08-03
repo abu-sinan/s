@@ -94,78 +94,152 @@ class PopmartMonitor:
         return default_config
 
     def setup_selenium(self):
-        """Setup undetected Chrome driver with fallback options"""
+        """Setup Chrome driver with multiple fallback strategies"""
         try:
-            # Try undetected-chromedriver first
+            # Strategy 1: Try undetected-chromedriver with better settings
             try:
+                self.logger.info("Attempting undetected-chromedriver setup...")
+                
                 options = uc.ChromeOptions()
                 
-                # Basic Chrome arguments that work with most versions
+                # Essential Chrome arguments for headless operation
                 options.add_argument('--no-sandbox')
                 options.add_argument('--disable-dev-shm-usage')
+                options.add_argument('--disable-gpu')
+                options.add_argument('--headless=new')
+                options.add_argument('--window-size=1920,1080')
                 options.add_argument('--disable-web-security')
-                options.add_argument('--disable-features=VizDisplayCompositor')
+                options.add_argument('--allow-running-insecure-content')
                 options.add_argument('--disable-extensions')
                 options.add_argument('--disable-plugins')
                 options.add_argument('--disable-images')
-                options.add_argument('--disable-javascript')
-                options.add_argument('--mute-audio')
+                options.add_argument('--disable-default-apps')
+                options.add_argument('--no-first-run')
+                options.add_argument('--disable-background-timer-throttling')
+                options.add_argument('--disable-renderer-backgrounding')
+                options.add_argument('--disable-backgrounding-occluded-windows')
                 
-                # Headless mode for server deployment
-                options.add_argument('--headless=new')
-                options.add_argument('--disable-gpu')
-                options.add_argument('--window-size=1920,1080')
-                
-                # User agent
+                # User agent rotation
                 options.add_argument(f'--user-agent={self.ua.random}')
                 
-                # Memory optimization
-                options.add_argument('--memory-pressure-off')
-                options.add_argument('--max_old_space_size=4096')
+                # Try to create driver with timeout
+                self.driver = uc.Chrome(
+                    options=options, 
+                    version_main=None,
+                    driver_executable_path=None,
+                    browser_executable_path=None,
+                    port=0  # Let Chrome choose available port
+                )
                 
-                self.driver = uc.Chrome(options=options, version_main=None)
+                # Quick test
+                self.driver.set_page_load_timeout(30)
+                self.driver.get("data:text/html,<html><body>Test</body></html>")
+                
                 self.logger.info("Undetected Chrome driver setup successful")
+                return True
                 
             except Exception as uc_error:
-                self.logger.warning(f"Undetected Chrome failed: {uc_error}, trying regular Selenium...")
+                self.logger.warning(f"Undetected Chrome failed: {uc_error}")
+                if self.driver:
+                    try:
+                        self.driver.quit()
+                    except:
+                        pass
+                    self.driver = None
+            
+            # Strategy 2: Regular Selenium with WebDriver Manager
+            try:
+                self.logger.info("Trying regular Selenium with WebDriver Manager...")
                 
-                # Fallback to regular Selenium WebDriver
                 from selenium.webdriver.chrome.service import Service
                 from selenium.webdriver.chrome.options import Options as ChromeOptions
+                from webdriver_manager.chrome import ChromeDriverManager
                 
                 chrome_options = ChromeOptions()
                 chrome_options.add_argument('--no-sandbox')
                 chrome_options.add_argument('--disable-dev-shm-usage')
-                chrome_options.add_argument('--disable-web-security')
-                chrome_options.add_argument('--disable-features=VizDisplayCompositor')
-                chrome_options.add_argument('--headless=new')
                 chrome_options.add_argument('--disable-gpu')
+                chrome_options.add_argument('--headless=new')
                 chrome_options.add_argument('--window-size=1920,1080')
+                chrome_options.add_argument('--disable-web-security')
+                chrome_options.add_argument('--disable-extensions')
+                chrome_options.add_argument('--disable-plugins')
+                chrome_options.add_argument('--disable-images')
+                chrome_options.add_argument('--no-first-run')
                 chrome_options.add_argument(f'--user-agent={self.ua.random}')
+                
+                # Anti-detection measures
                 chrome_options.add_argument('--disable-blink-features=AutomationControlled')
                 chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
                 chrome_options.add_experimental_option('useAutomationExtension', False)
                 
-                self.driver = webdriver.Chrome(options=chrome_options)
+                # Setup service with WebDriver Manager
+                service = Service(ChromeDriverManager().install())
+                
+                self.driver = webdriver.Chrome(service=service, options=chrome_options)
+                self.driver.set_page_load_timeout(30)
+                
+                # Test the driver
+                self.driver.get("data:text/html,<html><body>Test</body></html>")
+                
                 self.logger.info("Regular Chrome driver setup successful")
+                return True
+                
+            except Exception as reg_error:
+                self.logger.warning(f"Regular Selenium failed: {reg_error}")
+                if self.driver:
+                    try:
+                        self.driver.quit()
+                    except:
+                        pass
+                    self.driver = None
             
-            # Execute stealth scripts regardless of driver type
+            # Strategy 3: Try with system Chrome binary
             try:
-                self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-                self.driver.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
-                self.driver.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']})")
-            except Exception:
-                pass
+                self.logger.info("Trying with system Chrome binary...")
+                
+                from selenium.webdriver.chrome.options import Options as ChromeOptions
+                
+                chrome_options = ChromeOptions()
+                chrome_options.binary_location = "/usr/bin/google-chrome"  # System Chrome
+                chrome_options.add_argument('--no-sandbox')
+                chrome_options.add_argument('--disable-dev-shm-usage')
+                chrome_options.add_argument('--disable-gpu')
+                chrome_options.add_argument('--headless=new')
+                chrome_options.add_argument('--remote-debugging-port=9222')
+                chrome_options.add_argument(f'--user-agent={self.ua.random}')
+                
+                self.driver = webdriver.Chrome(options=chrome_options)
+                self.driver.set_page_load_timeout(30)
+                self.driver.get("data:text/html,<html><body>Test</body></html>")
+                
+                self.logger.info("System Chrome driver setup successful")
+                return True
+                
+            except Exception as sys_error:
+                self.logger.warning(f"System Chrome failed: {sys_error}")
+                if self.driver:
+                    try:
+                        self.driver.quit()
+                    except:
+                        pass
+                    self.driver = None
             
-            # Test the driver
-            self.driver.get("https://httpbin.org/user-agent")
-            self.logger.info("Chrome driver test successful")
-            return True
+            # Execute stealth scripts if we have a working driver
+            if self.driver:
+                try:
+                    self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+                    self.driver.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
+                    self.driver.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']})")
+                except Exception:
+                    pass
+                return True
             
         except Exception as e:
-            self.logger.error(f"Failed to setup any Chrome driver: {e}")
-            self.logger.info("Falling back to CloudScraper only mode")
-            return False
+            self.logger.error(f"All Chrome driver strategies failed: {e}")
+        
+        self.logger.error("Failed to setup any Chrome driver - will continue with CloudScraper only")
+        return False
 
     def human_behavior_delay(self):
         """Add random human-like delays"""
@@ -225,115 +299,211 @@ class PopmartMonitor:
             return False
 
     def handle_cloudflare_challenge(self, url):
-        """Handle Cloudflare challenges using multiple methods"""
+        """Handle Cloudflare challenges and 403 blocks using multiple methods"""
         self.logger.info(f"Fetching content from: {url}")
         
-        # Method 1: Enhanced CloudScraper with better headers
-        try:
-            # Create session with better headers
-            scraper = cloudscraper.create_scraper(
-                browser={
-                    'browser': 'chrome',
-                    'platform': 'linux',
-                    'desktop': True
-                }
-            )
-            
-            # Add realistic headers
-            headers = {
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'DNT': '1',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'none',
-                'Cache-Control': 'max-age=0',
-            }
-            
-            response = scraper.get(url, headers=headers, timeout=30)
-            
-            if response.status_code == 200:
-                # Check if we got a valid page (not just Cloudflare challenge)
-                if "cf-browser-verification" not in response.text.lower() and \
-                   "checking your browser" not in response.text.lower() and \
-                   len(response.text) > 1000:  # Ensure we got actual content
-                    self.logger.info("CloudScraper succeeded")
-                    return response
-                else:
-                    self.logger.warning("CloudScraper got challenge page, trying Selenium...")
-            else:
-                self.logger.warning(f"CloudScraper returned status {response.status_code}")
-                
-        except Exception as e:
-            self.logger.warning(f"CloudScraper failed: {e}")
-
-        # Method 2: Selenium with undetected-chromedriver
-        if self.config.get('cloudflare', {}).get('use_selenium_fallback', True):
-            self.logger.info("Trying Selenium approach...")
+        # Method 1: Enhanced CloudScraper with rotating strategies
+        for attempt in range(3):
             try:
-                if not self.driver:
-                    if not self.setup_selenium():
-                        self.logger.error("Could not setup Selenium driver")
-                        return None
+                self.logger.info(f"CloudScraper attempt {attempt + 1}/3")
                 
-                # Navigate to the URL
+                # Create new scraper for each attempt
+                scraper = cloudscraper.create_scraper(
+                    browser={
+                        'browser': 'chrome',
+                        'platform': 'linux' if attempt == 0 else 'windows' if attempt == 1 else 'darwin',
+                        'desktop': True
+                    },
+                    delay=random.uniform(1, 3),
+                    debug=False
+                )
+                
+                # Rotate headers for each attempt
+                headers_sets = [
+                    {
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                        'Accept-Language': 'en-US,en;q=0.5',
+                        'Accept-Encoding': 'gzip, deflate, br',
+                        'DNT': '1',
+                        'Connection': 'keep-alive',
+                        'Upgrade-Insecure-Requests': '1',
+                        'Sec-Fetch-Site': 'none',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-User': '?1',
+                        'Cache-Control': 'max-age=0',
+                    },
+                    {
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Accept-Encoding': 'gzip, deflate, br',
+                        'Connection': 'keep-alive',
+                        'Upgrade-Insecure-Requests': '1',
+                        'User-Agent': self.ua.random,
+                    },
+                    {
+                        'Accept': '*/*',
+                        'Accept-Language': 'en-US,en;q=0.5',
+                        'Connection': 'keep-alive',
+                        'User-Agent': self.ua.random,
+                    }
+                ]
+                
+                headers = headers_sets[attempt]
+                
+                # Add random delay between attempts
+                if attempt > 0:
+                    time.sleep(random.uniform(2, 5))
+                
+                response = scraper.get(url, headers=headers, timeout=30, allow_redirects=True)
+                
+                self.logger.info(f"CloudScraper response: {response.status_code}")
+                
+                if response.status_code == 200:
+                    # Validate content quality
+                    content_checks = [
+                        len(response.text) > 1000,
+                        "cf-browser-verification" not in response.text.lower(),
+                        "checking your browser" not in response.text.lower(),
+                        "popmart" in response.text.lower() or "labubu" in response.text.lower()
+                    ]
+                    
+                    if all(content_checks[:2]) and any(content_checks[2:]):  # At least basic checks + one content check
+                        self.logger.info("CloudScraper succeeded with valid content")
+                        return response
+                    else:
+                        self.logger.warning(f"CloudScraper got low-quality content (length: {len(response.text)})")
+                        
+                elif response.status_code == 403:
+                    self.logger.warning(f"CloudScraper blocked (403) - attempt {attempt + 1}")
+                    # Try different scraper configuration on 403
+                    continue
+                    
+                else:
+                    self.logger.warning(f"CloudScraper returned status {response.status_code}")
+                    
+            except Exception as e:
+                self.logger.warning(f"CloudScraper attempt {attempt + 1} failed: {e}")
+                continue
+
+        # Method 2: Selenium approach (only if CloudScraper completely failed)
+        if self.config.get('cloudflare', {}).get('use_selenium_fallback', True):
+            self.logger.info("All CloudScraper attempts failed, trying Selenium...")
+            
+            try:
+                # Setup driver if not already done
+                if not self.driver:
+                    self.logger.info("Setting up Selenium driver...")
+                    if not self.setup_selenium():
+                        self.logger.error("Could not setup any Selenium driver")
+                        return self.try_simple_requests(url)
+                
+                # Navigate with error handling
+                self.logger.info("Navigating to URL with Selenium...")
                 self.driver.get(url)
                 
-                # Wait a bit for any challenges to appear
-                time.sleep(3)
+                # Wait and check for challenges
+                initial_wait = random.uniform(3, 6)
+                time.sleep(initial_wait)
                 
-                # Wait for Cloudflare challenge to complete or timeout
-                max_wait = 30
+                max_wait = 45  # Increased timeout
                 start_time = time.time()
                 
                 while time.time() - start_time < max_wait:
-                    page_source = self.driver.page_source
-                    
-                    # Check if we're still in a challenge
-                    if "cf-browser-verification" in page_source.lower() or \
-                       "checking your browser" in page_source.lower() or \
-                       "please wait" in page_source.lower():
-                        self.logger.info("Waiting for Cloudflare challenge to complete...")
+                    try:
+                        page_source = self.driver.page_source
+                        
+                        # Check challenge indicators
+                        challenge_indicators = [
+                            "cf-browser-verification",
+                            "checking your browser", 
+                            "please wait",
+                            "ddos protection",
+                            "security check"
+                        ]
+                        
+                        in_challenge = any(indicator in page_source.lower() for indicator in challenge_indicators)
+                        
+                        if in_challenge:
+                            self.logger.info(f"Selenium waiting for challenge... ({int(time.time() - start_time)}s)")
+                            time.sleep(3)
+                            continue
+                        
+                        # Check for valid content
+                        if len(page_source) > 1000:
+                            content_indicators = ["popmart", "labubu", "add to bag", "notify me when available"]
+                            has_content = any(indicator in page_source.lower() for indicator in content_indicators)
+                            
+                            if has_content:
+                                self.logger.info("Selenium succeeded - got valid Popmart content")
+                                return page_source
+                            elif "access denied" in page_source.lower() or "403" in page_source:
+                                self.logger.error("Selenium got access denied")
+                                break
+                            else:
+                                self.logger.warning("Selenium got content but quality unclear, waiting...")
+                                time.sleep(2)
+                                continue
+                        
                         time.sleep(2)
-                        continue
-                    
-                    # Check if we have actual content
-                    if len(page_source) > 1000 and "popmart" in page_source.lower():
-                        self.logger.info("Selenium succeeded - got valid page content")
-                        # Add human-like delay
-                        time.sleep(random.uniform(2, 5))
-                        return self.driver.page_source
-                    
-                    time.sleep(1)
+                        
+                    except Exception as e:
+                        self.logger.warning(f"Error during Selenium wait: {e}")
+                        break
                 
-                # If we get here, we either timed out or got minimal content
-                page_source = self.driver.page_source
-                if len(page_source) > 500:  # Accept whatever we got if it's substantial
-                    self.logger.warning("Selenium timeout, but got some content")
-                    return page_source
-                else:
-                    self.logger.error("Selenium failed - no valid content received")
+                # Final attempt to get content
+                try:
+                    final_content = self.driver.page_source
+                    if len(final_content) > 500:  # Accept minimal content as last resort
+                        self.logger.warning("Selenium timeout, returning available content")
+                        return final_content
+                except Exception:
+                    pass
                     
             except Exception as e:
-                self.logger.error(f"Selenium approach failed: {e}")
+                self.logger.error(f"Selenium approach completely failed: {e}")
+                # Clean up broken driver
+                if self.driver:
+                    try:
+                        self.driver.quit()
+                    except:
+                        pass
+                    self.driver = None
         
-        # Method 3: Simple requests as last resort
+        # Method 3: Simple requests fallback
+        return self.try_simple_requests(url)
+    
+    def try_simple_requests(self, url):
+        """Try simple requests as absolute last resort"""
         try:
             self.logger.info("Trying simple requests as last resort...")
-            headers = {'User-Agent': self.ua.random}
-            response = requests.get(url, headers=headers, timeout=30)
             
-            if response.status_code == 200 and len(response.text) > 500:
-                self.logger.info("Simple requests worked")
-                return response
+            user_agents = [
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            ]
+            
+            for ua in user_agents:
+                headers = {
+                    'User-Agent': ua,
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5',
+                    'Accept-Encoding': 'gzip, deflate',
+                    'Connection': 'keep-alive',
+                }
+                
+                response = requests.get(url, headers=headers, timeout=30, allow_redirects=True)
+                
+                if response.status_code == 200 and len(response.text) > 500:
+                    self.logger.info(f"Simple requests worked with UA: {ua[:50]}...")
+                    return response
+                    
+                time.sleep(random.uniform(1, 3))
                 
         except Exception as e:
             self.logger.warning(f"Simple requests failed: {e}")
         
-        self.logger.error("All methods failed to get content")
+        self.logger.error("All content fetching methods failed")
         return None
 
     def extract_product_info(self, html_content, product_url):
@@ -409,63 +579,6 @@ class PopmartMonitor:
             self.logger.error(f"Error extracting product info: {e}")
         
         return product_info
-
-    def check_product(self, product_config):
-        """Check individual product availability"""
-        product_url = product_config['url']
-        product_name = product_config['name']
-        
-        self.logger.info(f"Checking product: {product_name}")
-        
-        max_retries = self.config.get('cloudflare', {}).get('max_retries', 3)
-        retry_delay = self.config.get('cloudflare', {}).get('retry_delay', 10)
-        
-        for attempt in range(max_retries):
-            try:
-                # Add random delay between requests
-                if attempt > 0:
-                    time.sleep(retry_delay + random.uniform(1, 5))
-                
-                # Get page content without login
-                content = self.handle_cloudflare_challenge(product_url)
-                
-                if content:
-                    if isinstance(content, requests.Response):
-                        html_content = content.text
-                    else:
-                        html_content = content
-                    
-                    # Check if login is required for this specific product
-                    if self.is_login_required(html_content):
-                        self.logger.warning(f"Login required for {product_name}, but monitoring without login")
-                        # Continue monitoring - some info might still be available
-                    
-                    # Extract product information
-                    product_info = self.extract_product_info(html_content, product_url)
-                    
-                    # Check if product is now in stock
-                    if product_info['in_stock']:
-                        self.send_stock_notification(product_info, product_config)
-                        return True
-                    else:
-                        self.logger.info(f"Product still out of stock: {product_name}")
-                        return False
-                        
-                else:
-                    self.logger.warning(f"Failed to get content for {product_name} (attempt {attempt + 1})")
-                    
-            except Exception as e:
-                self.logger.error(f"Error checking product {product_name} (attempt {attempt + 1}): {e}")
-
-                    # Send error notification
-                self.send_discord_notification(
-                    title="🚨 Monitor Error",
-                    description=f"Error checking product: {product_name}\nError: {str(e)}",
-                    color=0xff0000
-                )
-        
-        self.logger.error(f"Failed to check product after {max_retries} attempts: {product_name}")
-        return False
 
     def handle_location_popup(self):
         """Handle United States location confirmation popup"""
@@ -646,101 +759,164 @@ class PopmartMonitor:
         
         return self.perform_login(email, password)
 
-    def send_stock_notification(self, product_info, product_config):
-        """Send stock availability notification"""
-        fields = [
-            {
-                'name': '💰 Price',
-                'value': product_info.get('price', 'N/A'),
-                'inline': True
-            },
-            {
-                'name': '🔗 Direct Buy Link',
-                'value': f"[BUY NOW]({product_info['direct_buy_url']})",
-                'inline': True
-            },
-            {
-                'name': '⏰ Time',
-                'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'inline': True
-            }
-        ]
+    def check_product(self, product_config):
+        """Check individual product availability with login handling"""
+        product_url = product_config['url']
+        product_name = product_config['name']
         
-        self.send_discord_notification(
-            title="🎉 PRODUCT IN STOCK!",
-            description=f"**{product_info['name']}** is now available!",
-            color=0x00ff00,
-            fields=fields,
-            image_url=product_info.get('image_url')
-        )
+        self.logger.info(f"Checking product: {product_name}")
+        
+        max_retries = self.config.get('cloudflare', {}).get('max_retries', 3) retry_delay = self.config.get('cloudflare', {}).get('retry_delay', 10)
 
-    def monitor_products(self):
-        """Monitor all configured products"""
-        products = self.config.get('products', [])
-        
-        if not products:
-            self.logger.warning("No products configured for monitoring!")
-            return
-        
-        self.logger.info(f"Starting monitoring cycle for {len(products)} products...")
-        
-        for product in products:
-            try:
-                self.check_product(product)
-                
-                # Random delay between product checks
-                if self.config.get('monitoring', {}).get('random_delay', True):
-                    delay = random.uniform(10, 30)
-                    time.sleep(delay)
-                    
-            except Exception as e:
-                self.logger.error(f"Error in monitoring cycle: {e}")
-                self.send_discord_notification(
-                    title="🚨 Monitor Error",
-                    description=f"Critical error in monitoring cycle: {str(e)}",
-                    color=0xff0000
-                )
-
-    def cleanup(self):
-        """Cleanup resources"""
-        if self.driver:
-            try:
-                self.driver.quit()
-            except Exception:
-                pass
-
-    def run_monitor(self):
-        """Main monitoring loop"""
-        self.logger.info("🚀 Starting Popmart Monitor...")
-        
-        # Send startup notification
-        self.send_discord_notification(
-            title="🤖 Monitor Started",
-            description="Popmart Labubu Monitor is now running!",
-            color=0x0099ff
-        )
-        
+        for attempt in range(max_retries):
         try:
-            # Schedule monitoring
-            interval = self.config.get('monitoring', {}).get('check_interval_minutes', 2)
-            schedule.every(interval).minutes.do(self.monitor_products)
+            # Add random delay between requests
+            if attempt > 0:
+                time.sleep(retry_delay + random.uniform(1, 5))
             
-            while True:
-                schedule.run_pending()
-                time.sleep(30)  # Check schedule every 30 seconds
+            # Get page content
+            content = self.handle_cloudflare_challenge(product_url)
+            
+            if content:
+                if isinstance(content, requests.Response):
+                    html_content = content.text
+                else:
+                    html_content = content
                 
-        except KeyboardInterrupt:
-            self.logger.info("Monitor stopped by user")
+                # Handle login if required
+                if self.is_login_required(html_content):
+                    self.logger.info("Login required for this product page")
+                    
+                    # If using Selenium driver, try to login
+                    if self.driver:
+                        login_success = self.handle_login_if_required(html_content)
+                        if login_success:
+                            # Get page content again after login
+                            time.sleep(3)
+                            html_content = self.driver.page_source
+                        else:
+                            self.logger.warning("Login failed, continuing with limited monitoring")
+                
+                # Extract product information
+                product_info = self.extract_product_info(html_content, product_url)
+                
+                # Check if product is now in stock
+                if product_info['in_stock']:
+                    self.send_stock_notification(product_info, product_config)
+                    return True
+                else:
+                    self.logger.info(f"Product still out of stock: {product_name}")
+                    return False
+                    
+            else:
+                self.logger.warning(f"Failed to get content for {product_name} (attempt {attempt + 1})")
+                
         except Exception as e:
-            self.logger.error(f"Critical error in main loop: {e}")
+            self.logger.error(f"Error checking product {product_name} (attempt {attempt + 1}): {e}")
+            
+            # Send error notification
             self.send_discord_notification(
-                title="💀 Monitor Stopped",
-                description=f"Monitor stopped due to critical error: {str(e)}",
+                title="🚨 Monitor Error",
+                description=f"Error checking product: {product_name}\nError: {str(e)}",
                 color=0xff0000
             )
-        finally:
-            self.cleanup()
+    
+    self.logger.error(f"Failed to check product after {max_retries} attempts: {product_name}")
+    return False
 
-if __name__ == "__main__":
-    monitor = PopmartMonitor()
-    monitor.run_monitor()
+def send_stock_notification(self, product_info, product_config):
+    """Send stock availability notification"""
+    fields = [
+        {
+            'name': '💰 Price',
+            'value': product_info.get('price', 'N/A'),
+            'inline': True
+        },
+        {
+            'name': '🔗 Direct Buy Link',
+            'value': f"[BUY NOW]({product_info['direct_buy_url']})",
+            'inline': True
+        },
+        {
+            'name': '⏰ Time',
+            'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'inline': True
+        }
+    ]
+    
+    self.send_discord_notification(
+        title="🎉 PRODUCT IN STOCK!",
+        description=f"**{product_info['name']}** is now available!",
+        color=0x00ff00,
+        fields=fields,
+        image_url=product_info.get('image_url')
+    )
+
+def monitor_products(self):
+    """Monitor all configured products"""
+    products = self.config.get('products', [])
+    
+    if not products:
+        self.logger.warning("No products configured for monitoring!")
+        return
+    
+    self.logger.info(f"Starting monitoring cycle for {len(products)} products...")
+    
+    for product in products:
+        try:
+            self.check_product(product)
+            
+            # Random delay between product checks
+            if self.config.get('monitoring', {}).get('random_delay', True):
+                delay = random.uniform(10, 30)
+                time.sleep(delay)
+                
+        except Exception as e:
+            self.logger.error(f"Error in monitoring cycle: {e}")
+            self.send_discord_notification(
+                title="🚨 Monitor Error",
+                description=f"Critical error in monitoring cycle: {str(e)}",
+                color=0xff0000
+            )
+
+def cleanup(self):
+    """Cleanup resources"""
+    if self.driver:
+        try:
+            self.driver.quit()
+        except Exception:
+            pass
+
+def run_monitor(self):
+    """Main monitoring loop"""
+    self.logger.info("🚀 Starting Popmart Monitor...")
+    
+    # Send startup notification
+    self.send_discord_notification(
+        title="🤖 Monitor Started",
+        description="Popmart Labubu Monitor is now running!",
+        color=0x0099ff
+    )
+    
+    try:
+        # Schedule monitoring
+        interval = self.config.get('monitoring', {}).get('check_interval_minutes', 2)
+        schedule.every(interval).minutes.do(self.monitor_products)
+        
+        while True:
+            schedule.run_pending()
+            time.sleep(30)  # Check schedule every 30 seconds
+            
+    except KeyboardInterrupt:
+        self.logger.info("Monitor stopped by user")
+    except Exception as e:
+        self.logger.error(f"Critical error in main loop: {e}")
+        self.send_discord_notification(
+            title="💀 Monitor Stopped",
+            description=f"Monitor stopped due to critical error: {str(e)}",
+            color=0xff0000
+        )
+    finally:
+        self.cleanup()
+
+if name == "main": monitor = PopmartMonitor() monitor.run_monitor()
