@@ -1,9 +1,9 @@
 
 {
-    "discord_webhook_url": "YOUR_DISCORD_WEBHOOK_URL_HERE",
+    "discord_webhook_url": "https://discord.com/api/webhooks/1401499528950972416/xRXH4m0ntY6b-hPKJ8GPB5AkR4XX0ETQOkZVOk6OqjFP0V1aI1k0L1JSvK_UXH82snRU",
     "account": {
-        "email": "your-email@example.com",
-        "password": "your-password",
+        "email": "abusinan1523@gmail.com",
+        "password": "Sinan563.",
         "login_required": true
     },
     "products": [
