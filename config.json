@@ -1,24 +1,26 @@
+
 {
-    "email": "abusinan1523@gmail.com",
-    "password": "Sinan563.",
-    "headless": true,
-    "scan_interval": 300,
-    "telegram": {
-        "token": "8352946607:AAFTsY3KWCeyt4i8qhr_Z95xBZdbUW7UM0A",
-        "chat_id": "7624517153"
+    "discord_webhook_url": "YOUR_DISCORD_WEBHOOK_URL_HERE",
+    "account": {
+        "email": "your-email@example.com",
+        "password": "your-password",
+        "login_required": true
     },
     "products": [
         {
-            "name": "THE MONSTERS - BEST OF LUCK Vinyl Plush Doll",
-            "url": "https://www.popmart.com/us/products/890/THE-MONSTERS---BEST-OF-LUCK-Vinyl-Plush-Doll",
-            "size": "Single box",
-            "quantity": 1
-        },
-        {
-            "name": "HACIPUPU Snuggle With You Series-Plush Bag Blind Box",
-            "url": "https://www.popmart.com/us/products/1921/HACIPUPU-Snuggle-With-You-Series-Plush-Bag-Blind-Box",
-            "size": "Whole set",
-            "quantity": 3
+            "name": "LABUBU × PRONOUNCE - WINGS OF FORTUNE Vinyl Plush Hanging Card",
+            "url": "https://www.popmart.com/us/products/1584/LABUBU-%C3%97-PRONOUNCE---WINGS-OF-FORTUNE-Vinyl-Plush-Hanging-Card"
         }
-    ]
+    ],
+    "monitoring": {
+        "check_interval_minutes": 2,
+        "max_check_interval_minutes": 5,
+        "random_delay": true,
+        "human_behavior": true
+    },
+    "cloudflare": {
+        "max_retries": 3,
+        "retry_delay": 10,
+        "use_selenium_fallback": true
+    }
 }
