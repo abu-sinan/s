@@ -61,10 +61,10 @@ class PopmartMonitor:
     def create_default_config(self):
         """Create default configuration file"""
         default_config = {
-            "discord_webhook_url": "https://discord.com/api/webhooks/1401499528950972416/xRXH4m0ntY6b-hPKJ8GPB5AkR4XX0ETQOkZVOk6OqjFP0V1aI1k0L1JSvK_UXH82snRU",
+            "discord_webhook_url": "",
             "account": {
-                "email": "abusinan1523@gmail.com",
-                "password": "Sinan563.",
+                "email": "",
+                "password": "",
                 "login_required": False
             },
             "products": [
@@ -94,26 +94,77 @@ class PopmartMonitor:
         return default_config
 
     def setup_selenium(self):
-        """Setup undetected Chrome driver"""
+        """Setup undetected Chrome driver with fallback options"""
         try:
-            options = uc.ChromeOptions()
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            options.add_argument('--disable-blink-features=AutomationControlled')
-            options.add_experimental_option("excludeSwitches", ["enable-automation"])
-            options.add_experimental_option('useAutomationExtension', False)
-            options.add_argument(f'--user-agent={self.ua.random}')
+            # Try undetected-chromedriver first
+            try:
+                options = uc.ChromeOptions()
+                
+                # Basic Chrome arguments that work with most versions
+                options.add_argument('--no-sandbox')
+                options.add_argument('--disable-dev-shm-usage')
+                options.add_argument('--disable-web-security')
+                options.add_argument('--disable-features=VizDisplayCompositor')
+                options.add_argument('--disable-extensions')
+                options.add_argument('--disable-plugins')
+                options.add_argument('--disable-images')
+                options.add_argument('--disable-javascript')
+                options.add_argument('--mute-audio')
+                
+                # Headless mode for server deployment
+                options.add_argument('--headless=new')
+                options.add_argument('--disable-gpu')
+                options.add_argument('--window-size=1920,1080')
+                
+                # User agent
+                options.add_argument(f'--user-agent={self.ua.random}')
+                
+                # Memory optimization
+                options.add_argument('--memory-pressure-off')
+                options.add_argument('--max_old_space_size=4096')
+                
+                self.driver = uc.Chrome(options=options, version_main=None)
+                self.logger.info("Undetected Chrome driver setup successful")
+                
+            except Exception as uc_error:
+                self.logger.warning(f"Undetected Chrome failed: {uc_error}, trying regular Selenium...")
+                
+                # Fallback to regular Selenium WebDriver
+                from selenium.webdriver.chrome.service import Service
+                from selenium.webdriver.chrome.options import Options as ChromeOptions
+                
+                chrome_options = ChromeOptions()
+                chrome_options.add_argument('--no-sandbox')
+                chrome_options.add_argument('--disable-dev-shm-usage')
+                chrome_options.add_argument('--disable-web-security')
+                chrome_options.add_argument('--disable-features=VizDisplayCompositor')
+                chrome_options.add_argument('--headless=new')
+                chrome_options.add_argument('--disable-gpu')
+                chrome_options.add_argument('--window-size=1920,1080')
+                chrome_options.add_argument(f'--user-agent={self.ua.random}')
+                chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+                chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+                chrome_options.add_experimental_option('useAutomationExtension', False)
+                
+                self.driver = webdriver.Chrome(options=chrome_options)
+                self.logger.info("Regular Chrome driver setup successful")
             
-            # Headless mode for server deployment
-            options.add_argument('--headless')
-            options.add_argument('--disable-gpu')
+            # Execute stealth scripts regardless of driver type
+            try:
+                self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+                self.driver.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
+                self.driver.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']})")
+            except Exception:
+                pass
             
-            self.driver = uc.Chrome(options=options)
-            self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-            
+            # Test the driver
+            self.driver.get("https://httpbin.org/user-agent")
+            self.logger.info("Chrome driver test successful")
             return True
+            
         except Exception as e:
-            self.logger.error(f"Failed to setup Selenium driver: {e}")
+            self.logger.error(f"Failed to setup any Chrome driver: {e}")
+            self.logger.info("Falling back to CloudScraper only mode")
             return False
 
     def human_behavior_delay(self):
@@ -175,41 +226,114 @@ class PopmartMonitor:
 
     def handle_cloudflare_challenge(self, url):
         """Handle Cloudflare challenges using multiple methods"""
-        self.logger.info("Handling Cloudflare challenge...")
+        self.logger.info(f"Fetching content from: {url}")
         
-        # Method 1: CloudScraper
+        # Method 1: Enhanced CloudScraper with better headers
         try:
-            response = self.session.get(url, timeout=30)
-            if response.status_code == 200 and "cf-browser-verification" not in response.text.lower():
-                return response
+            # Create session with better headers
+            scraper = cloudscraper.create_scraper(
+                browser={
+                    'browser': 'chrome',
+                    'platform': 'linux',
+                    'desktop': True
+                }
+            )
+            
+            # Add realistic headers
+            headers = {
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Cache-Control': 'max-age=0',
+            }
+            
+            response = scraper.get(url, headers=headers, timeout=30)
+            
+            if response.status_code == 200:
+                # Check if we got a valid page (not just Cloudflare challenge)
+                if "cf-browser-verification" not in response.text.lower() and \
+                   "checking your browser" not in response.text.lower() and \
+                   len(response.text) > 1000:  # Ensure we got actual content
+                    self.logger.info("CloudScraper succeeded")
+                    return response
+                else:
+                    self.logger.warning("CloudScraper got challenge page, trying Selenium...")
+            else:
+                self.logger.warning(f"CloudScraper returned status {response.status_code}")
+                
         except Exception as e:
             self.logger.warning(f"CloudScraper failed: {e}")
 
         # Method 2: Selenium with undetected-chromedriver
         if self.config.get('cloudflare', {}).get('use_selenium_fallback', True):
+            self.logger.info("Trying Selenium approach...")
             try:
                 if not self.driver:
                     if not self.setup_selenium():
+                        self.logger.error("Could not setup Selenium driver")
                         return None
                 
+                # Navigate to the URL
                 self.driver.get(url)
-                self.human_behavior_delay()
                 
-                # Wait for Cloudflare challenge to complete
-                WebDriverWait(self.driver, 30).until(
-                    lambda driver: "cf-browser-verification" not in driver.page_source.lower()
-                )
+                # Wait a bit for any challenges to appear
+                time.sleep(3)
                 
-                # Additional wait for page to fully load
-                time.sleep(random.uniform(3, 7))
+                # Wait for Cloudflare challenge to complete or timeout
+                max_wait = 30
+                start_time = time.time()
                 
-                return self.driver.page_source
+                while time.time() - start_time < max_wait:
+                    page_source = self.driver.page_source
+                    
+                    # Check if we're still in a challenge
+                    if "cf-browser-verification" in page_source.lower() or \
+                       "checking your browser" in page_source.lower() or \
+                       "please wait" in page_source.lower():
+                        self.logger.info("Waiting for Cloudflare challenge to complete...")
+                        time.sleep(2)
+                        continue
+                    
+                    # Check if we have actual content
+                    if len(page_source) > 1000 and "popmart" in page_source.lower():
+                        self.logger.info("Selenium succeeded - got valid page content")
+                        # Add human-like delay
+                        time.sleep(random.uniform(2, 5))
+                        return self.driver.page_source
+                    
+                    time.sleep(1)
                 
-            except TimeoutException:
-                self.logger.error("Cloudflare challenge timeout")
+                # If we get here, we either timed out or got minimal content
+                page_source = self.driver.page_source
+                if len(page_source) > 500:  # Accept whatever we got if it's substantial
+                    self.logger.warning("Selenium timeout, but got some content")
+                    return page_source
+                else:
+                    self.logger.error("Selenium failed - no valid content received")
+                    
             except Exception as e:
-                self.logger.error(f"Selenium fallback failed: {e}")
+                self.logger.error(f"Selenium approach failed: {e}")
         
+        # Method 3: Simple requests as last resort
+        try:
+            self.logger.info("Trying simple requests as last resort...")
+            headers = {'User-Agent': self.ua.random}
+            response = requests.get(url, headers=headers, timeout=30)
+            
+            if response.status_code == 200 and len(response.text) > 500:
+                self.logger.info("Simple requests worked")
+                return response
+                
+        except Exception as e:
+            self.logger.warning(f"Simple requests failed: {e}")
+        
+        self.logger.error("All methods failed to get content")
         return None
 
     def extract_product_info(self, html_content, product_url):
@@ -332,8 +456,8 @@ class PopmartMonitor:
                     
             except Exception as e:
                 self.logger.error(f"Error checking product {product_name} (attempt {attempt + 1}): {e}")
-                
-                # Send error notification
+
+                    # Send error notification
                 self.send_discord_notification(
                     title="🚨 Monitor Error",
                     description=f"Error checking product: {product_name}\nError: {str(e)}",
