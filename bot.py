@@ -61,17 +61,16 @@ class PopmartMonitor:
     def create_default_config(self):
         """Create default configuration file"""
         default_config = {
-            "discord_webhook_url": "",
+            "discord_webhook_url": "https://discord.com/api/webhooks/1401499528950972416/xRXH4m0ntY6b-hPKJ8GPB5AkR4XX0ETQOkZVOk6OqjFP0V1aI1k0L1JSvK_UXH82snRU",
             "account": {
-                "email": "",
-                "password": ""
+                "email": "abusinan1523@gmail.com",
+                "password": "Sinan563.",
+                "login_required": False
             },
             "products": [
                 {
                     "name": "LABUBU × PRONOUNCE - WINGS OF FORTUNE Vinyl Plush Hanging Card",
-                    "url": "https://www.popmart.com/us/products/1584/LABUBU-%C3%97-PRONOUNCE---WINGS-OF-FORTUNE-Vinyl-Plush-Hanging-Card",
-                    "target_price": 19.99,
-                    "notify_price_changes": True
+                    "url": "https://www.popmart.com/us/products/1584/LABUBU-%C3%97-PRONOUNCE---WINGS-OF-FORTUNE-Vinyl-Plush-Hanging-Card"
                 }
             ],
             "monitoring": {
@@ -303,7 +302,7 @@ class PopmartMonitor:
                 if attempt > 0:
                     time.sleep(retry_delay + random.uniform(1, 5))
                 
-                # Get page content
+                # Get page content without login
                 content = self.handle_cloudflare_challenge(product_url)
                 
                 if content:
@@ -311,6 +310,11 @@ class PopmartMonitor:
                         html_content = content.text
                     else:
                         html_content = content
+                    
+                    # Check if login is required for this specific product
+                    if self.is_login_required(html_content):
+                        self.logger.warning(f"Login required for {product_name}, but monitoring without login")
+                        # Continue monitoring - some info might still be available
                     
                     # Extract product information
                     product_info = self.extract_product_info(html_content, product_url)
@@ -338,6 +342,185 @@ class PopmartMonitor:
         
         self.logger.error(f"Failed to check product after {max_retries} attempts: {product_name}")
         return False
+
+    def handle_location_popup(self):
+        """Handle United States location confirmation popup"""
+        try:
+            # Look for location popup: "You are in the United States.Update your location?"
+            location_popup = self.driver.find_element(By.CLASS_NAME, "index_ipWarnContainer__d5qTd")
+            if location_popup.is_displayed():
+                self.logger.info("Location popup detected, closing it...")
+                
+                # Click the close button
+                close_btn = self.driver.find_element(By.CLASS_NAME, "index_closeIcon__oBwY4")
+                close_btn.click()
+                self.human_behavior_delay()
+                return True
+        except Exception:
+            pass
+        return False
+
+    def handle_privacy_policy(self):
+        """Handle Privacy Policy and Terms & Conditions popup"""
+        try:
+            # Look for policy popup: "I agree to the Privacy Policy and Terms & Conditions"
+            policy_popup = self.driver.find_element(By.CLASS_NAME, "policy_aboveFixedContainer__KfeZi")
+            if policy_popup.is_displayed():
+                self.logger.info("Privacy policy popup detected, accepting...")
+                
+                # Click ACCEPT button
+                accept_btn = self.driver.find_element(By.CLASS_NAME, "policy_acceptBtn__ZNU71")
+                accept_btn.click()
+                self.human_behavior_delay()
+                return True
+        except Exception:
+            pass
+        return False
+
+    def perform_login(self, email, password):
+        """Perform complete login process with all steps"""
+        try:
+            self.logger.info("Starting login process...")
+            
+            # Step 1: Handle location popup if present
+            self.handle_location_popup()
+            
+            # Step 2: Handle privacy policy if present
+            self.handle_privacy_policy()
+            
+            # Step 3: Enter email address
+            self.logger.info("Entering email address...")
+            email_input = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.ID, "email"))
+            )
+            email_input.clear()
+            email_input.send_keys(email)
+            self.human_behavior_delay()
+            
+            # Step 4: Check the service agreement checkbox
+            self.logger.info("Checking service agreement...")
+            try:
+                checkbox = self.driver.find_element(By.CLASS_NAME, "ant-checkbox-input")
+                if not checkbox.is_selected():
+                    checkbox.click()
+                    self.human_behavior_delay()
+            except Exception as e:
+                self.logger.warning(f"Could not find or click checkbox: {e}")
+            
+            # Step 5: Click CONTINUE button
+            self.logger.info("Clicking continue button...")
+            continue_btn = self.driver.find_element(By.CSS_SELECTOR, "button.ant-btn.ant-btn-primary.index_loginButton__O6r8l")
+            continue_btn.click()
+            self.human_behavior_delay()
+            
+            # Step 6: Wait for password page and enter password
+            self.logger.info("Entering password...")
+            password_input = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.ID, "password"))
+            )
+            password_input.clear()
+            password_input.send_keys(password)
+            self.human_behavior_delay()
+            
+            # Step 7: Click SIGN IN button
+            self.logger.info("Clicking sign in button...")
+            signin_btn = self.driver.find_element(By.CSS_SELECTOR, "button[type='submit'].ant-btn.ant-btn-primary.index_loginButton__O6r8l")
+            signin_btn.click()
+            
+            # Step 8: Wait for login to complete and check for errors
+            time.sleep(5)
+            
+            # Check for "Oops" error modal
+            try:
+                error_modal = self.driver.find_element(By.CLASS_NAME, "layout_wafErrorModalText__fzi48")
+                if error_modal.is_displayed():
+                    error_text = error_modal.text
+                    self.logger.error(f"Login error detected: {error_text}")
+                    
+                    # Click OK button to dismiss error
+                    ok_btn = self.driver.find_element(By.CLASS_NAME, "layout_wafErrorModalButton__yJdyc")
+                    ok_btn.click()
+                    return False
+            except Exception:
+                pass
+            
+            # Check if login was successful by looking for user-specific elements
+            try:
+                # Look for elements that appear after successful login
+                WebDriverWait(self.driver, 10).until(
+                    lambda driver: "index_disabledEmail__sdPjU" not in driver.page_source
+                )
+                self.logger.info("Login successful!")
+                return True
+            except TimeoutException:
+                self.logger.error("Login appears to have failed - still on login page")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Login process failed: {e}")
+            return False
+
+    def is_login_required(self, html_content):
+        """Check if the page requires login using specific HTML elements"""
+        login_indicators = [
+            # Email input page
+            'placeholder="Enter your e-mail address"',
+            'class="ant-input index_loginInput__HBgjq"',
+            'id="email"',
+            
+            # Password input page  
+            'placeholder="Enter your password"',
+            'id="password"',
+            'class="index_disabledEmail__sdPjU"',
+            
+            # Login form
+            'class="ant-form ant-form-horizontal index_loginForm__yLEpj"',
+            
+            # Login buttons
+            'class="ant-btn ant-btn-primary index_loginButton__O6r8l"',
+            
+            # Service agreement checkbox
+            'class="index_serviceCheck__D3US1"',
+            'class="ant-checkbox-wrapper index_serviceCheckbox__KjCpl"',
+            
+            # Privacy policy popup
+            'class="policy_aboveFixedContainer__KfeZi"',
+            'class="policy_acceptBtn__ZNU71"',
+            
+            # Location popup
+            'class="index_ipWarnContainer__d5qTd"',
+            'You are in the United States'
+        ]
+        
+        for indicator in login_indicators:
+            if indicator in html_content:
+                return True
+        return False
+
+    def handle_login_if_required(self, html_content):
+        """Handle login process if required and account details are provided"""
+        if not self.is_login_required(html_content):
+            return True
+        
+        # Check if login is enabled in config
+        account_config = self.config.get('account', {})
+        if not account_config.get('login_required', False):
+            self.logger.info("Login required but disabled in config - monitoring without login")
+            return True
+        
+        email = account_config.get('email', '')
+        password = account_config.get('password', '')
+        
+        if not email or not password:
+            self.logger.warning("Login required but credentials not provided in config")
+            return False
+        
+        # Ensure we have a Selenium driver for login
+        if not self.driver:
+            if not self.setup_selenium():
+                return False
+        
+        return self.perform_login(email, password)
 
     def send_stock_notification(self, product_info, product_config):
         """Send stock availability notification"""
