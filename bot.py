@@ -544,36 +544,74 @@ class PopmartMonitor:
             if title_tag:
                 product_info['name'] = title_tag.get_text().strip()
             
-            # Check stock status - Key indicators
-            stock_indicators = {
-                'in_stock': [
-                    'ADD TO BAG',
-                    'index_red__kx6Ql',  # Red button class for add to bag
-                    'ADD TO CART'
-                ],
-                'out_of_stock': [
-                    'NOTIFY ME WHEN AVAILABLE',
-                    'index_black__RgEgP',  # Black button class for notify
-                    'Out of Stock',
-                    'SOLD OUT'
-                ]
-            }
+            # Enhanced stock status detection using exact HTML elements
+            
+            # Method 1: Check for specific button classes and text
+            # OUT OF STOCK indicators (most reliable)
+            out_of_stock_indicators = [
+                # Black button with "NOTIFY ME WHEN AVAILABLE"
+                'index_black__RgEgP',
+                'NOTIFY ME WHEN AVAILABLE',
+                'index_renderbtn__iGhhU',
+                # Container class for out of stock
+                'index_actionContainer__EqFYe'
+            ]
+            
+            # IN STOCK indicators  
+            in_stock_indicators = [
+                # Red button with "ADD TO BAG"
+                'index_red__kx6Ql',
+                'ADD TO BAG',
+                'ADD TO CART'
+            ]
             
             page_text = html_content.lower()
             
-            # Check for in-stock indicators
-            for indicator in stock_indicators['in_stock']:
+            # First check for out-of-stock (more specific)
+            is_out_of_stock = False
+            for indicator in out_of_stock_indicators:
                 if indicator.lower() in page_text:
+                    is_out_of_stock = True
+                    break
+            
+            # Method 2: Use BeautifulSoup for precise element detection
+            if not is_out_of_stock:
+                # Look for the exact out-of-stock button structure
+                notify_button = soup.find('div', class_='index_renderbtn__iGhhU')
+                if notify_button and 'NOTIFY ME WHEN AVAILABLE' in notify_button.get_text():
+                    is_out_of_stock = True
+                
+                # Look for black button class
+                black_button = soup.find('div', class_='index_black__RgEgP')
+                if black_button:
+                    is_out_of_stock = True
+            
+            # Method 3: Look for in-stock indicators if not explicitly out of stock
+            if not is_out_of_stock:
+                for indicator in in_stock_indicators:
+                    if indicator.lower() in page_text:
+                        product_info['in_stock'] = True
+                        break
+                
+                # Look for red button class (in stock)
+                red_button = soup.find('div', class_='index_red__kx6Ql')
+                if red_button:
                     product_info['in_stock'] = True
-                    break
             
-            # Check for out-of-stock indicators (override in_stock if found)
-            for indicator in stock_indicators['out_of_stock']:
-                if indicator.lower() in page_text:
+            # If we found out-of-stock indicators, explicitly set to False
+            if is_out_of_stock:
+                product_info['in_stock'] = False
+            
+            # Method 4: Additional validation using action container
+            action_container = soup.find('div', class_='index_actionContainer__EqFYe')
+            if action_container:
+                container_text = action_container.get_text().lower()
+                if 'notify me when available' in container_text:
                     product_info['in_stock'] = False
-                    break
+                elif 'add to bag' in container_text:
+                    product_info['in_stock'] = True
             
-            # Extract price
+            # Enhanced price extraction
             price_patterns = [
                 r'\$[\d,]+\.?\d*',
                 r'price["\s]*:[\s]*["\$]*([\d,]+\.?\d*)',
@@ -587,13 +625,34 @@ class PopmartMonitor:
                     product_info['price'] = price_match.group(0)
                     break
             
-            # Extract image URL
+            # Look for price in specific elements
+            if not product_info['price']:
+                # Look for price in common price containers
+                price_elements = soup.find_all(['span', 'div'], class_=re.compile(r'price|cost|amount'))
+                for element in price_elements:
+                    text = element.get_text()
+                    price_match = re.search(r'\$[\d,]+\.?\d*', text)
+                    if price_match:
+                        product_info['price'] = price_match.group(0)
+                        break
+            
+            # Enhanced image URL extraction
             img_tags = soup.find_all('img', {'alt': 'POP MART'})
             for img in img_tags:
                 src = img.get('src', '')
-                if 'popmart.com' in src and ('jpg' in src or 'png' in src or 'webp' in src):
-                    product_info['image_url'] = src
-                    break
+                if 'popmart.com' in src and any(ext in src for ext in ['jpg', 'png', 'webp', 'jpeg']):
+                    # Prefer larger images
+                    if '800x800' in src or 'large' in src:
+                        product_info['image_url'] = src
+                        break
+                    elif not product_info['image_url']:  # Use any image as fallback
+                        product_info['image_url'] = src
+            
+            # Log detection details for debugging
+            stock_status = "IN STOCK" if product_info['in_stock'] else "OUT OF STOCK"
+            self.logger.info(f"Stock detection: {stock_status}")
+            if is_out_of_stock:
+                self.logger.info("  - Found out-of-stock indicators (black button/notify text)")
             
         except Exception as e:
             self.logger.error(f"Error extracting product info: {e}")
