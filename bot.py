@@ -194,30 +194,50 @@ class PopmartMonitor:
                         pass
                     self.driver = None
             
-            # Strategy 3: Try with system Chrome binary
+            # Strategy 3: Try with system Chrome/Chromium binary
             try:
-                self.logger.info("Trying with system Chrome binary...")
+                self.logger.info("Trying with system Chrome/Chromium binary...")
                 
                 from selenium.webdriver.chrome.options import Options as ChromeOptions
                 
                 chrome_options = ChromeOptions()
-                chrome_options.binary_location = "/usr/bin/google-chrome"  # System Chrome
+                
+                # Try to find Chrome/Chromium binary
+                chrome_binaries = [
+                    "/usr/bin/google-chrome",
+                    "/usr/bin/google-chrome-stable", 
+                    "/usr/bin/chromium-browser",
+                    "/usr/bin/chromium"
+                ]
+                
+                chrome_binary = None
+                for binary in chrome_binaries:
+                    if os.path.exists(binary):
+                        chrome_binary = binary
+                        break
+                
+                if chrome_binary:
+                    chrome_options.binary_location = chrome_binary
+                    self.logger.info(f"Using Chrome binary: {chrome_binary}")
+                
                 chrome_options.add_argument('--no-sandbox')
                 chrome_options.add_argument('--disable-dev-shm-usage')
                 chrome_options.add_argument('--disable-gpu')
                 chrome_options.add_argument('--headless=new')
                 chrome_options.add_argument('--remote-debugging-port=9222')
+                chrome_options.add_argument('--disable-web-security')
+                chrome_options.add_argument('--disable-features=VizDisplayCompositor')
                 chrome_options.add_argument(f'--user-agent={self.ua.random}')
                 
                 self.driver = webdriver.Chrome(options=chrome_options)
                 self.driver.set_page_load_timeout(30)
                 self.driver.get("data:text/html,<html><body>Test</body></html>")
                 
-                self.logger.info("System Chrome driver setup successful")
+                self.logger.info(f"System Chrome/Chromium driver setup successful with {chrome_binary}")
                 return True
                 
             except Exception as sys_error:
-                self.logger.warning(f"System Chrome failed: {sys_error}")
+                self.logger.warning(f"System Chrome/Chromium failed: {sys_error}")
                 if self.driver:
                     try:
                         self.driver.quit()
@@ -580,6 +600,63 @@ class PopmartMonitor:
         
         return product_info
 
+    def check_product(self, product_config):
+        """Check individual product availability"""
+        product_url = product_config['url']
+        product_name = product_config['name']
+        
+        self.logger.info(f"Checking product: {product_name}")
+        
+        max_retries = self.config.get('cloudflare', {}).get('max_retries', 3)
+        retry_delay = self.config.get('cloudflare', {}).get('retry_delay', 10)
+        
+        for attempt in range(max_retries):
+            try:
+                # Add random delay between requests
+                if attempt > 0:
+                    time.sleep(retry_delay + random.uniform(1, 5))
+                
+                # Get page content without login
+                content = self.handle_cloudflare_challenge(product_url)
+                
+                if content:
+                    if isinstance(content, requests.Response):
+                        html_content = content.text
+                    else:
+                        html_content = content
+                    
+                    # Check if login is required for this specific product
+                    if self.is_login_required(html_content):
+                        self.logger.warning(f"Login required for {product_name}, but monitoring without login")
+                        # Continue monitoring - some info might still be available
+                    
+                    # Extract product information
+                    product_info = self.extract_product_info(html_content, product_url)
+                    
+                    # Check if product is now in stock
+                    if product_info['in_stock']:
+                        self.send_stock_notification(product_info, product_config)
+                        return True
+                    else:
+                        self.logger.info(f"Product still out of stock: {product_name}")
+                        return False
+                        
+                else:
+                    self.logger.warning(f"Failed to get content for {product_name} (attempt {attempt + 1})")
+                    
+            except Exception as e:
+                self.logger.error(f"Error checking product {product_name} (attempt {attempt + 1}): {e}")
+                
+                # Send error notification
+                self.send_discord_notification(
+                    title="🚨 Monitor Error",
+                    description=f"Error checking product: {product_name}\nError: {str(e)}",
+                    color=0xff0000
+                )
+        
+        self.logger.error(f"Failed to check product after {max_retries} attempts: {product_name}")
+        return False
+
     def handle_location_popup(self):
         """Handle United States location confirmation popup"""
         try:
@@ -759,164 +836,101 @@ class PopmartMonitor:
         
         return self.perform_login(email, password)
 
-    def check_product(self, product_config):
-        """Check individual product availability with login handling"""
-        product_url = product_config['url']
-        product_name = product_config['name']
+    def send_stock_notification(self, product_info, product_config):
+        """Send stock availability notification"""
+        fields = [
+            {
+                'name': '💰 Price',
+                'value': product_info.get('price', 'N/A'),
+                'inline': True
+            },
+            {
+                'name': '🔗 Direct Buy Link',
+                'value': f"[BUY NOW]({product_info['direct_buy_url']})",
+                'inline': True
+            },
+            {
+                'name': '⏰ Time',
+                'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'inline': True
+            }
+        ]
         
-        self.logger.info(f"Checking product: {product_name}")
-        
-        max_retries = self.config.get('cloudflare', {}).get('max_retries', 3) retry_delay = self.config.get('cloudflare', {}).get('retry_delay', 10)
-
-        for attempt in range(max_retries):
-        try:
-            # Add random delay between requests
-            if attempt > 0:
-                time.sleep(retry_delay + random.uniform(1, 5))
-            
-            # Get page content
-            content = self.handle_cloudflare_challenge(product_url)
-            
-            if content:
-                if isinstance(content, requests.Response):
-                    html_content = content.text
-                else:
-                    html_content = content
-                
-                # Handle login if required
-                if self.is_login_required(html_content):
-                    self.logger.info("Login required for this product page")
-                    
-                    # If using Selenium driver, try to login
-                    if self.driver:
-                        login_success = self.handle_login_if_required(html_content)
-                        if login_success:
-                            # Get page content again after login
-                            time.sleep(3)
-                            html_content = self.driver.page_source
-                        else:
-                            self.logger.warning("Login failed, continuing with limited monitoring")
-                
-                # Extract product information
-                product_info = self.extract_product_info(html_content, product_url)
-                
-                # Check if product is now in stock
-                if product_info['in_stock']:
-                    self.send_stock_notification(product_info, product_config)
-                    return True
-                else:
-                    self.logger.info(f"Product still out of stock: {product_name}")
-                    return False
-                    
-            else:
-                self.logger.warning(f"Failed to get content for {product_name} (attempt {attempt + 1})")
-                
-        except Exception as e:
-            self.logger.error(f"Error checking product {product_name} (attempt {attempt + 1}): {e}")
-            
-            # Send error notification
-            self.send_discord_notification(
-                title="🚨 Monitor Error",
-                description=f"Error checking product: {product_name}\nError: {str(e)}",
-                color=0xff0000
-            )
-    
-    self.logger.error(f"Failed to check product after {max_retries} attempts: {product_name}")
-    return False
-
-def send_stock_notification(self, product_info, product_config):
-    """Send stock availability notification"""
-    fields = [
-        {
-            'name': '💰 Price',
-            'value': product_info.get('price', 'N/A'),
-            'inline': True
-        },
-        {
-            'name': '🔗 Direct Buy Link',
-            'value': f"[BUY NOW]({product_info['direct_buy_url']})",
-            'inline': True
-        },
-        {
-            'name': '⏰ Time',
-            'value': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'inline': True
-        }
-    ]
-    
-    self.send_discord_notification(
-        title="🎉 PRODUCT IN STOCK!",
-        description=f"**{product_info['name']}** is now available!",
-        color=0x00ff00,
-        fields=fields,
-        image_url=product_info.get('image_url')
-    )
-
-def monitor_products(self):
-    """Monitor all configured products"""
-    products = self.config.get('products', [])
-    
-    if not products:
-        self.logger.warning("No products configured for monitoring!")
-        return
-    
-    self.logger.info(f"Starting monitoring cycle for {len(products)} products...")
-    
-    for product in products:
-        try:
-            self.check_product(product)
-            
-            # Random delay between product checks
-            if self.config.get('monitoring', {}).get('random_delay', True):
-                delay = random.uniform(10, 30)
-                time.sleep(delay)
-                
-        except Exception as e:
-            self.logger.error(f"Error in monitoring cycle: {e}")
-            self.send_discord_notification(
-                title="🚨 Monitor Error",
-                description=f"Critical error in monitoring cycle: {str(e)}",
-                color=0xff0000
-            )
-
-def cleanup(self):
-    """Cleanup resources"""
-    if self.driver:
-        try:
-            self.driver.quit()
-        except Exception:
-            pass
-
-def run_monitor(self):
-    """Main monitoring loop"""
-    self.logger.info("🚀 Starting Popmart Monitor...")
-    
-    # Send startup notification
-    self.send_discord_notification(
-        title="🤖 Monitor Started",
-        description="Popmart Labubu Monitor is now running!",
-        color=0x0099ff
-    )
-    
-    try:
-        # Schedule monitoring
-        interval = self.config.get('monitoring', {}).get('check_interval_minutes', 2)
-        schedule.every(interval).minutes.do(self.monitor_products)
-        
-        while True:
-            schedule.run_pending()
-            time.sleep(30)  # Check schedule every 30 seconds
-            
-    except KeyboardInterrupt:
-        self.logger.info("Monitor stopped by user")
-    except Exception as e:
-        self.logger.error(f"Critical error in main loop: {e}")
         self.send_discord_notification(
-            title="💀 Monitor Stopped",
-            description=f"Monitor stopped due to critical error: {str(e)}",
-            color=0xff0000
+            title="🎉 PRODUCT IN STOCK!",
+            description=f"**{product_info['name']}** is now available!",
+            color=0x00ff00,
+            fields=fields,
+            image_url=product_info.get('image_url')
         )
-    finally:
-        self.cleanup()
 
-if name == "main": monitor = PopmartMonitor() monitor.run_monitor()
+    def monitor_products(self):
+        """Monitor all configured products"""
+        products = self.config.get('products', [])
+        
+        if not products:
+            self.logger.warning("No products configured for monitoring!")
+            return
+        
+        self.logger.info(f"Starting monitoring cycle for {len(products)} products...")
+        
+        for product in products:
+            try:
+                self.check_product(product)
+                
+                # Random delay between product checks
+                if self.config.get('monitoring', {}).get('random_delay', True):
+                    delay = random.uniform(10, 30)
+                    time.sleep(delay)
+                    
+            except Exception as e:
+                self.logger.error(f"Error in monitoring cycle: {e}")
+                self.send_discord_notification(
+                    title="🚨 Monitor Error",
+                    description=f"Critical error in monitoring cycle: {str(e)}",
+                    color=0xff0000
+                )
+
+    def cleanup(self):
+        """Cleanup resources"""
+        if self.driver:
+            try:
+                self.driver.quit()
+            except Exception:
+                pass
+
+    def run_monitor(self):
+        """Main monitoring loop"""
+        self.logger.info("🚀 Starting Popmart Monitor...")
+        
+        # Send startup notification
+        self.send_discord_notification(
+            title="🤖 Monitor Started",
+            description="Popmart Labubu Monitor is now running!",
+            color=0x0099ff
+        )
+        
+        try:
+            # Schedule monitoring
+            interval = self.config.get('monitoring', {}).get('check_interval_minutes', 2)
+            schedule.every(interval).minutes.do(self.monitor_products)
+            
+            while True:
+                schedule.run_pending()
+                time.sleep(30)  # Check schedule every 30 seconds
+                
+        except KeyboardInterrupt:
+            self.logger.info("Monitor stopped by user")
+        except Exception as e:
+            self.logger.error(f"Critical error in main loop: {e}")
+            self.send_discord_notification(
+                title="💀 Monitor Stopped",
+                description=f"Monitor stopped due to critical error: {str(e)}",
+                color=0xff0000
+            )
+        finally:
+            self.cleanup()
+
+if __name__ == "__main__":
+    monitor = PopmartMonitor()
+    monitor.run_monitor()
